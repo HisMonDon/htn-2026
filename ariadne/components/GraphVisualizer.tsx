@@ -2,7 +2,7 @@
 
 import React, { useRef, useCallback, useMemo, useState } from "react";
 import ForceGraph, { type ForceGraphMethods } from "react-force-graph-2d";
-import { X, ExternalLink, AlertTriangle, BrainCircuit, Sprout, Clock, ArrowDown, GitBranch } from "lucide-react";
+import { X, ExternalLink, AlertTriangle, BrainCircuit, Sprout, Clock, ArrowDown, GitBranch, FilterX } from "lucide-react";
 import {
   ROLE_COLOR,
   ROLE_LABEL,
@@ -11,40 +11,9 @@ import {
   type GraphLink,
   type GraphNode,
 } from "@/lib/graph";
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] as string
-  );
-}
-
-function displayTitle(node: GraphNode): string {
-  return node.title.trim() || node.publisher.trim() || node.url;
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) return "unknown";
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toUTCString();
-}
-
-/** Compact UTC date for the temporal block, e.g. "Dec 13, 2023". */
-const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  timeZone: "UTC",
-});
-
-function formatDate(value: string | null): string {
-  if (!value) return "unknown";
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : DATE_FORMAT.format(new Date(parsed));
-}
-
-function percent(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
+import { displayTitle, escapeHtml, formatDate, formatTimestamp, percent } from "@/lib/format";
+import { ConfidenceBar, Drawer, Field, StringList } from "./panel-ui";
+import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
 
 /** What each `temporal.ordering` value actually licenses us to claim. */
 const ORDERING_NOTE: Record<string, string> = {
@@ -54,38 +23,6 @@ const ORDERING_NOTE: Record<string, string> = {
     "Order was inferred from link evidence, not from a reliable publication timestamp.",
   unknown: "Publication order could not be established from the available timestamps.",
 };
-
-/** One labelled block in the side panel. */
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="text-xs text-gray-500 uppercase mb-1 tracking-wide">{label}</p>
-      <div className="text-sm text-gray-200 break-words">{children}</div>
-    </div>
-  );
-}
-
-function StringList({ items, empty }: { items: string[]; empty: string }) {
-  if (items.length === 0) return <span className="text-gray-500">{empty}</span>;
-  return (
-    <ul className="list-disc list-inside space-y-1">
-      {items.map((item, index) => (
-        <li key={`${item}-${index}`}>{item}</li>
-      ))}
-    </ul>
-  );
-}
-
-function ConfidenceBar({ value, color }: { value: number; color: string }) {
-  return (
-    <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-      <div
-        className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%`, backgroundColor: color }}
-      />
-    </div>
-  );
-}
 
 /** Endpoint summary: resolved node when we have one, bare id when we do not. */
 function Endpoint({ id, node, role }: { id: string | null; node: GraphNode | undefined; role: string }) {
@@ -122,6 +59,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
+  // The rejected-evidence drawer shares the right edge, so it is exclusive with the inspectors.
+  const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
+  const [evidenceTab, setEvidenceTab] = useState<EvidenceTab>("rejected");
 
   const nodesById = useMemo(() => new Map(data.nodes.map((node) => [node.id, node])), [data.nodes]);
 
@@ -130,11 +70,13 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
       fgRef.current.centerAt(node.x, node.y, 1000);
       fgRef.current.zoom(8, 2000);
     }
+    setEvidencePanelOpen(false);
     setSelectedLink(null);
     setSelectedNode(node);
   }, []);
 
   const handleLinkClick = useCallback((link: GraphLink) => {
+    setEvidencePanelOpen(false);
     setSelectedNode(null);
     setSelectedLink(link);
   }, []);
@@ -142,6 +84,13 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
   const handleBackgroundClick = useCallback(() => {
     setSelectedNode(null);
     setSelectedLink(null);
+    setEvidencePanelOpen(false);
+  }, []);
+
+  const openEvidencePanel = useCallback(() => {
+    setSelectedNode(null);
+    setSelectedLink(null);
+    setEvidencePanelOpen(true);
   }, []);
 
   // Endpoints are read through endpointId(): the simulation swaps ids for node objects.
@@ -185,12 +134,32 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         linkDirectionalArrowRelPos={1}
       />
 
-      {/* The Side Panel - renders the selected node OR the selected edge, never both. */}
-      <div
-        className={`absolute top-0 right-0 h-full w-96 bg-black/80 backdrop-blur-xl border-l border-white/10 p-6 text-white transition-transform duration-300 ease-in-out z-50 overflow-y-auto ${
-          panelOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+      {/* Opens the rejected-evidence drawer; sits under it so the two never fight. */}
+      <button
+        onClick={openEvidencePanel}
+        className="absolute bottom-6 right-6 z-40 text-left bg-black/60 hover:bg-white/10 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2.5 transition-colors"
       >
+        <span className="flex items-center text-sm text-gray-200">
+          <FilterX size={15} className="mr-2 text-gray-400" />
+          Rejected Evidence
+        </span>
+        <span className="block text-xs text-gray-500 mt-0.5">
+          {data.rejectedEdges.length} rejected &middot; {data.excludedCandidates.length} excluded
+        </span>
+      </button>
+
+      <RejectedEvidencePanel
+        open={evidencePanelOpen}
+        tab={evidenceTab}
+        onTabChange={setEvidenceTab}
+        onClose={() => setEvidencePanelOpen(false)}
+        rejectedEdges={data.rejectedEdges}
+        excludedCandidates={data.excludedCandidates}
+        nodesById={nodesById}
+      />
+
+      {/* The Side Panel - renders the selected node OR the selected edge, never both. */}
+      <Drawer open={panelOpen}>
         {selectedNode && (
           <div className="flex flex-col h-full space-y-5">
             {/* Header */}
@@ -432,7 +401,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
             )}
           </div>
         )}
-      </div>
+      </Drawer>
     </div>
   );
 }

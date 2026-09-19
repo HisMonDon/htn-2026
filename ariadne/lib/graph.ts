@@ -4,7 +4,13 @@
  * carried through so later UI work can inspect the full evidence.
  */
 
-import type { LineageTree, LineageTreeEdge, LineageTreeNode, RejectedEdge } from "./api";
+import type {
+  ExcludedCandidate,
+  LineageTree,
+  LineageTreeEdge,
+  LineageTreeNode,
+  RejectedEdge,
+} from "./api";
 
 /** How a node is drawn. Provenance role only — this is not a truth classification. */
 export type NodeRole = "seed" | "root" | "conflict" | "discovered";
@@ -31,8 +37,13 @@ export interface GraphLink extends LineageTreeEdge {
 export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
-  /** Scored but not accepted. Kept out of `links` on purpose; here for later UI work. */
+  /**
+   * Relationships that were scored but not accepted. Deliberately absent from `links`:
+   * the graph shows accepted provenance only. Surfaced in the rejected-evidence panel.
+   */
   rejectedEdges: RejectedEdge[];
+  /** Pages discovered during research but left out of this lineage, with the backend's reason. */
+  excludedCandidates: ExcludedCandidate[];
 }
 
 /** Provenance role, not a truth judgement: nothing here says "fake" or "human-written". */
@@ -77,7 +88,7 @@ export function toGraphData(tree: LineageTree): GraphData {
     .filter((edge) => known.has(edge.parent_id) && known.has(edge.child_id))
     .map((edge) => ({ ...edge, source: edge.parent_id, target: edge.child_id }));
 
-  return { nodes, links, rejectedEdges: tree.rejected_edges };
+  return { nodes, links, rejectedEdges: tree.rejected_edges, excludedCandidates: tree.excluded };
 }
 
 /** Tolerates force-graph swapping link endpoints from ids to node objects after layout. */
