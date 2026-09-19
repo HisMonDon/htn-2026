@@ -6,23 +6,29 @@ import type { ResearchDeps } from "./pipeline";
 import { browserbaseProviders, CorpusFetcher, CorpusSearch, type PageFetcher, type SearchProvider } from "./providers";
 
 /**
- * USE_MOCKS=true: discovery runs over the offline corpus. Otherwise Browserbase Search and Fetch.
- * Retrieval uses Elastic whenever it is configured (in either mode), else in-memory BM25.
+ * Picks the discovery provider pair. USE_MOCKS=true always wins (offline corpus, deterministic,
+ * used by the research regression tests). Otherwise Browserbase Search and Fetch, today's only live
+ * provider.
+ *
+ * To add a replacement live provider: implement `SearchProvider`/`PageFetcher` in a new file under
+ * ./providers/ (see providers/browserbase.ts for the shape), then add a branch here selecting it —
+ * nothing else in the pipeline needs to change.
  */
-export function createResearchDeps(config: Config, detector?: AiWritingDetector): ResearchDeps {
-  let search: SearchProvider;
-  let fetcher: PageFetcher;
+function selectSearchProviders(config: Config): { search: SearchProvider; fetcher: PageFetcher } {
   if (config.useMocks) {
-    search = new CorpusSearch(CORPUS);
-    fetcher = new CorpusFetcher(CORPUS);
-  } else if (config.browserbaseApiKey) {
-    ({ search, fetcher } = browserbaseProviders(config.browserbaseApiKey));
-  } else {
-    const missing = async (): Promise<never> => {
-      throw new Error("BROWSERBASE_API_KEY is not set. Set it, or set USE_MOCKS=true to research the offline corpus.");
-    };
-    search = { kind: "browserbase", search: missing };
-    fetcher = { fetch: missing };
+    return { search: new CorpusSearch(CORPUS), fetcher: new CorpusFetcher(CORPUS) };
   }
+  if (config.browserbaseApiKey) {
+    return browserbaseProviders(config.browserbaseApiKey);
+  }
+  const missing = async (): Promise<never> => {
+    throw new Error("BROWSERBASE_API_KEY is not set. Set it, or set USE_MOCKS=true to research the offline corpus.");
+  };
+  return { search: { kind: "browserbase", search: missing }, fetcher: { fetch: missing } };
+}
+
+/** Retrieval uses Elastic whenever it is configured (in either discovery mode), else in-memory BM25. */
+export function createResearchDeps(config: Config, detector?: AiWritingDetector): ResearchDeps {
+  const { search, fetcher } = selectSearchProviders(config);
   return { search, fetcher, index: createCandidateIndex(config.elastic), detector };
 }
