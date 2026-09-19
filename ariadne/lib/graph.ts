@@ -19,10 +19,13 @@ export interface GraphNode extends LineageTreeNode {
 }
 
 export interface GraphLink extends LineageTreeEdge {
-  /** parent_id — provenance flows source -> target. */
-  source: string;
-  /** child_id */
-  target: string;
+  /**
+   * parent_id — provenance flows source -> target. Set as an id; the force simulation
+   * swaps in the node object once laid out, so read it through `endpointId()`.
+   */
+  source: string | GraphNode;
+  /** child_id — see `source`. */
+  target: string | GraphNode;
 }
 
 export interface GraphData {
