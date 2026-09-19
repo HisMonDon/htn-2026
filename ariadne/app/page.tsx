@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Galaxy from "@/components/Galaxy";
 import SpiralGalaxy from "@/components/SpiralGalaxy";
 import SearchBox from "@/components/SearchBox";
+import BuiltWith from "@/components/BuiltWith";
 import styles from "./landing.module.css";
 
 export default function LandingPage() {
@@ -66,6 +67,8 @@ export default function LandingPage() {
           onValueChange={setMessage}
           onSubmit={handleSend}
         />
+
+        <BuiltWith />
       </div>
     </main>
   );
