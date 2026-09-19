@@ -15,7 +15,7 @@ export function passageHints(value: Case): string[] {
   for (const match of claim.matchAll(/\b(?:[A-Z][\w.'-]*\s)+v\.\s(?:[A-Z][\w.'-]*(?:\s|,|$))+/g)) {
     hints.add(match[0].replace(/[,\s]+$/, ""));
   }
-  for (const match of claim.matchAll(/["“]([^"”]{6,})["”]/g)) {
+  for (const match of claim.matchAll(/["\u201c]([^"\u201d]{6,})["\u201d]/g)) {
     hints.add(match[1]!);
   }
   if (hints.size === 0) hints.add(claim);

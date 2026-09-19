@@ -73,7 +73,7 @@ const AMBIGUITY_FACTOR = 0.6;
 function normalize(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[‘’“”"'`]/g, "")
+    .replace(/[\u2018\u2019\u201c\u201d"'`]/g, "")
     .replace(/[^a-z0-9.\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -6,8 +6,9 @@ import {
   type StagehandBrowser,
 } from "@browserbasehq/stagehand";
 import { z } from "zod";
-import { consumePermit, type SubmissionPermit } from "./safety";
-import { normalizeText } from "./semantics";
+import { canonicalText, checkPassage } from "./passage-integrity";
+import { consumePermit, isControlledTarget, type SubmissionPermit } from "./safety";
+import { classifyField, type FieldSlot } from "./semantics";
 import type {
   BrowserOperator,
   CorrectionFormValues,
@@ -46,25 +47,22 @@ const PassageSchema = z.object({
 const RouteSchema = z.object({
   has_correction_form: z
     .boolean()
-    .describe("true if this page has a form for reporting an error or requesting a correction"),
+    .describe("true only if this page itself contains form fields for reporting an error or requesting a correction"),
   corrections_email: z.string().describe("an email address for corrections shown on the page, or empty"),
   policy_summary: z.string().describe("one or two sentences summarizing the corrections policy on this page, or empty"),
 });
 
+/**
+ * Kept flat on purpose: in live runs an array of objects with an enum made the Model Gateway's
+ * default model return no output. The model lists labels; semantics.classifyField maps them.
+ */
 const FormFieldsSchema = z.object({
-  fields: z
-    .array(
-      z.object({
-        label: z.string().describe("the visible label of the field"),
-        purpose: z
-          .enum(["name", "email", "subject", "passage", "body", "sources", "other"])
-          .describe(
-            "name: reporter's name; email: reporter's email; subject: title/headline of the request; passage: the quoted wrong text; body: explanation/details of the correction; sources: supporting links",
-          ),
-        required: z.boolean(),
-      }),
-    )
-    .describe("every visible input, textarea and select in the correction form, excluding buttons"),
+  fields: z.array(
+    z.object({
+      label: z.string(),
+      required: z.boolean(),
+    }),
+  ),
 });
 
 const InspectionSchema = z.object({
@@ -74,7 +72,7 @@ const InspectionSchema = z.object({
   notices: z.array(z.string()).describe("text of every correction or editor's note on the page"),
 });
 
-const PURPOSE_TO_VALUE: Record<string, keyof CorrectionFormValues> = {
+const SLOT_TO_VALUE: Record<FieldSlot, keyof CorrectionFormValues> = {
   name: "name",
   email: "email",
   subject: "subject",
@@ -144,6 +142,11 @@ export class BrowserbaseOperator implements BrowserOperator {
 
   async open(url: string): Promise<PageReading> {
     const page = await this.page();
+    // Free ngrok tunnels (how the controlled target is exposed to Browserbase) show an interstitial
+    // to browsers unless this header is sent. Sent only to the allowlisted controlled-target origin.
+    await page.setExtraHTTPHeaders(
+      isControlledTarget(url, this.options.allowedOrigins) ? { "ngrok-skip-browser-warning": "1" } : {},
+    );
     await page.goto(url);
     await page.waitForLoadState("load");
     this.filledOnUrl = null;
@@ -151,27 +154,65 @@ export class BrowserbaseOperator implements BrowserOperator {
   }
 
   async findPassage(hints: string[]): Promise<PassageResult> {
+    const page = await this.page();
+    const urlAtExtraction = await page.url();
     const data = await this.extract(
       `Find the passage on this page that mentions or relies on any of these: ${hints
         .map((hint) => `"${hint}"`)
         .join(", ")}. Copy the whole sentence or paragraph verbatim.`,
       PassageSchema,
     );
-    const { found, passage } = data;
-    if (!found || !passage.trim()) return { found: false, passage: null };
-    // Do not trust the model's quote unless it is really on the page.
-    const pageText = normalizeText(await this.visibleText());
-    if (!pageText.includes(normalizeText(passage))) return { found: false, passage: null };
-    return { found: true, passage: passage.trim() };
+    if (!data.found || !data.passage.trim()) {
+      return { found: false, passage: null, reason: "extraction reported no matching passage" };
+    }
+    // Do not trust the model's quote unless it is really on the page it was taken from.
+    const check = checkPassage({
+      passage: data.passage,
+      pageText: await this.visibleText(),
+      names: hints,
+      urlAtExtraction,
+      urlAtCheck: await page.url(),
+    });
+    if (!check.ok) return { found: false, passage: null, reason: check.reason };
+    return { found: true, passage: data.passage.trim(), reason: check.reason };
+  }
+
+  /** Counts visible forms that take free text. Generic DOM facts, no site-specific selectors. */
+  private async textFormCount(): Promise<number> {
+    const page = await this.page();
+    return page.evaluate<number>(`(() => {
+      const skip = ["hidden", "submit", "button", "reset", "image", "checkbox", "radio", "file"];
+      return Array.from(document.forms).filter((form) => {
+        const fields = Array.from(form.elements).filter((el) => {
+          const tag = el.tagName;
+          const type = (el.getAttribute("type") || "").toLowerCase();
+          const visible = el.getClientRects().length > 0;
+          return visible && (tag === "TEXTAREA" || (tag === "INPUT" && !skip.includes(type)));
+        });
+        return fields.some((el) => el.tagName === "TEXTAREA") || fields.length >= 2;
+      }).length;
+    })()`);
+  }
+
+  /** Current values of every visible text field on the page. */
+  private async fieldValues(): Promise<string[]> {
+    const page = await this.page();
+    return page.evaluate<string[]>(`(() => {
+      const skip = ["hidden", "submit", "button", "reset", "image", "checkbox", "radio", "file"];
+      return Array.from(document.querySelectorAll("textarea, input"))
+        .filter((el) => el.getClientRects().length > 0 && !skip.includes((el.getAttribute("type") || "").toLowerCase()))
+        .map((el) => el.value || "");
+    })()`);
   }
 
   private async describeRoute(): Promise<RouteResult | null> {
     const page = await this.page();
     const data = await this.extract(
-      "Does this page offer a way to report an error or request a correction to published content?",
+      "Does this page itself contain a form for reporting an error or requesting a correction? A link to such a form does not count.",
       RouteSchema,
     );
-    if (data.has_correction_form) {
+    // The model's yes is only accepted if the page really has a free-text form.
+    if (data.has_correction_form && (await this.textFormCount()) > 0) {
       return { route_type: "form", route_url: await page.url(), policy_summary: data.policy_summary };
     }
     if (data.corrections_email.includes("@")) {
@@ -207,23 +248,32 @@ export class BrowserbaseOperator implements BrowserOperator {
       "List the fields of the error-report or correction form on this page.",
       FormFieldsSchema,
     );
-    const filled: string[] = [];
+    const attempted: { purpose: string; value: string }[] = [];
     const missing: string[] = [];
+    const used = new Set<FieldSlot>();
     for (const field of data.fields) {
-      const key = PURPOSE_TO_VALUE[field.purpose];
-      if (!key) {
+      const slot = classifyField(field.label, null);
+      if (!slot || used.has(slot)) {
         if (field.required) missing.push(field.label);
         continue;
       }
-      const raw = values[key];
+      used.add(slot);
+      const raw = values[SLOT_TO_VALUE[slot]];
       const value = Array.isArray(raw) ? raw.join("\n") : raw;
       // Variables keep the long draft text out of the instruction; Stagehand substitutes it locally.
       const result = await this.stagehand.act(
         `Type %value% into the form field labeled "${field.label}". Do not submit the form.`,
         { variables: { value } },
       );
-      if (result.data.success) filled.push(field.purpose);
+      if (result.data.success) attempted.push({ purpose: slot, value });
       else if (field.required) missing.push(field.label);
+    }
+    // Count a field as filled only if its value is really in the DOM now.
+    const present = (await this.fieldValues()).map(canonicalText);
+    const filled: string[] = [];
+    for (const { purpose, value } of attempted) {
+      if (present.includes(canonicalText(value))) filled.push(purpose);
+      else missing.push(`${purpose} (typed but not present in the form)`);
     }
     this.filledOnUrl = await (await this.page()).url();
     return { filled, missing_required: missing };

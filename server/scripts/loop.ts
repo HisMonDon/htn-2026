@@ -4,6 +4,9 @@
  *   USE_MOCKS=true npm run loop     offline test operator (no Browserbase), for a quick sanity check
  *   npm run loop                    real Browserbase session; needs BROWSERBASE_API_KEY and
  *                                   CONTROLLED_TARGET_URL pointing at a public tunnel to TARGET_PORT
+ *
+ * By default it stops at the approval gate. Pass --approve to record approval and continue to
+ * submit, reopen and verify.
  */
 import seed from "../../data/cohen-bard.json" with { type: "json" };
 import type { Case } from "../../shared/schema";
@@ -54,6 +57,13 @@ try {
   show("execute while approval is pending (must refuse)", early.case, early.run);
   if (target.app.state().corrections.length !== 0) throw new Error("SAFETY: something was submitted before approval");
 
+  console.log(`target received ${target.app.state().corrections.length} correction(s) before approval`);
+  if (!process.argv.includes("--approve")) {
+    console.log("\nstopped at the approval gate (pass --approve to submit, reopen and verify)");
+    exitCode = 0;
+    throw null;
+  }
+
   service.decide("cohen-bard-2023", "approved");
   const executed = await service.execute("cohen-bard-2023");
   show("execute after approval", executed.case, executed.run);
@@ -61,7 +71,7 @@ try {
   console.log(`target received ${target.app.state().corrections.length} correction(s)`);
   exitCode = executed.run.outcome === "verified" ? 0 : 1;
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+  if (error !== null) console.error(error instanceof Error ? error.message : error);
 } finally {
   await service.shutdown();
   await target.close();

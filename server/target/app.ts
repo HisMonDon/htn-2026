@@ -119,7 +119,7 @@ function escapeHtml(value: string): string {
 function normalize(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[“”"'`]/g, "")
+    .replace(/[\u201c\u201d"'`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

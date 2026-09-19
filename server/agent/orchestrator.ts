@@ -214,8 +214,10 @@ export class Orchestrator {
 
     const passage = await run.stage("verify_passage", operator, async () => {
       const found = await operator.findPassage(passageHints(run.value));
-      if (!found.found || !found.passage) throw new Error("affected passage not found on the page");
-      return { result: found.passage, detail: found.passage };
+      if (!found.found || !found.passage) {
+        throw new Error(`affected passage not verified on the page: ${found.reason ?? "not found"}`);
+      }
+      return { result: found.passage, detail: `${found.passage}${found.reason ? ` [${found.reason}]` : ""}` };
     });
     ctx.passage = passage;
 
@@ -252,6 +254,9 @@ export class Orchestrator {
       });
       if (fill.missing_required.length > 0) {
         throw new Error(`could not fill required fields: ${fill.missing_required.join(", ")}`);
+      }
+      if (!fill.filled.includes("body")) {
+        throw new Error(`the correction text was not entered into the form (filled: ${fill.filled.join(", ") || "nothing"})`);
       }
       return { result: fill, detail: `filled ${fill.filled.join(", ")}; not submitted` };
     });

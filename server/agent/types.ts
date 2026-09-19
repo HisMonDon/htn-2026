@@ -5,6 +5,8 @@ export interface PassageResult {
   found: boolean;
   /** Exact text of the affected passage as it appears on the page. */
   passage: string | null;
+  /** Why the passage was accepted or rejected by the integrity check. */
+  reason?: string;
 }
 
 export interface RouteResult {

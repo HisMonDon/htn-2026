@@ -44,7 +44,7 @@ export function classifyField(descriptor: string, inputType: string | null): Fie
 export function normalizeText(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[‘’“”"'`]/g, "")
+    .replace(/[\u2018\u2019\u201c\u201d"'`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
