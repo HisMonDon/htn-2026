@@ -25,6 +25,8 @@ Fill in `.env` locally. It is git-ignored. Only `.env.example` is committed.
 | `BROWSERBASE_SESSION_TIMEOUT_S` | How long a filled form waits for approval (default 900) |
 | `LINEAGE_CONTACT_EMAIL` | Reply address typed into correction forms |
 | `CORS_ORIGIN` | Origin allowed to call the API from a browser (unset: no CORS headers) |
+| `ELASTIC_URL` / `ELASTIC_CLOUD_ID`, `ELASTIC_API_KEY` | Elastic retrieval for the research tree (unset: in-memory BM25) |
+| `ELASTIC_INDEX`, `ELASTIC_SEMANTIC`, `ELASTIC_INFERENCE_ID` | Index name, hybrid on/off (default on), `semantic_text` inference endpoint |
 
 ## Run
 
@@ -34,8 +36,27 @@ npm test
 npm run dev      # Vitest watch mode
 npm start        # API on :4000 and controlled target on :4100
 npm run target   # controlled target only (TARGET_VARIANT=alt for the alternate markup)
-npm run loop     # the full action loop against the controlled target, printed stage by stage
+npm run loop     # optional action loop against the controlled target (stops at approval; --approve to continue)
+npm run research # reconstruct a provenance tree from a claim (USE_MOCKS=true: offline corpus)
 ```
+
+### Provenance tree (primary feature)
+
+Given a claim (and optionally a seed URL), Lineage discovers candidate pages, extracts structured evidence, retrieves candidate parent/child pairs, scores every pair deterministically, and assembles the most defensible short tree. It is never handed the known chain.
+
+```
+discover (search + links + phrase search) -> extract -> index/retrieve pairs -> score edges -> assemble tree
+```
+
+- **Discovery:** Browserbase Search and Fetch live, or the synthetic offline corpus in `data/research-corpus.ts` (reserved `.test` domains, with decoys) under `USE_MOCKS=true`.
+- **Evidence per page:** URL, publisher, timestamp and where it came from, relevant passage, outbound links, fabricated citations and spelling variants, optional GPTZero result.
+- **Retrieval:** Elastic hybrid (RRF over lexical, `semantic_text` and a shared-citation keyword match) when `ELASTIC_URL` or `ELASTIC_CLOUD_ID` is set, otherwise in-memory BM25. Retrieval only proposes pairs.
+- **Scoring** (`server/research/edges.ts`):
+  - A later page never parents an earlier one. A page linking to something later than its own claimed date gets a flagged date conflict.
+  - Links from the child prove order. Shared fabricated citations place a page in the lineage.
+  - Copied phrasing outside quotations picks between parents. Similarity alone stays at 0.25 or below.
+  - Same-day pages without a link get no direction.
+- **Output** (`shared/tree.ts`): nodes, accepted edges with basis, mutations, timing, link evidence and alternatives, plus rejected edges, excluded candidates and stats.
 
 ### Action loop
 
@@ -65,6 +86,8 @@ Then set `CONTROLLED_TARGET_URL` to the tunnel URL and `BROWSERBASE_API_KEY` in 
 | POST | `/api/cases/:id/nodes/:nodeId/ai-check` | GPTZero evidence on one chain node |
 | POST | `/api/cases/:id/reset` | restore the seed |
 | POST | `/api/provenance/score` | `{ target, candidates, known_mutations? }` |
+| POST | `/api/research` | `{ claim, seed_url?, fabricated_citations?, include_ai_evidence? }` -> `{ id, tree }` |
+| GET | `/api/research/:id` | a previously built tree |
 
 ## Layout
 
@@ -74,6 +97,7 @@ Then set `CONTROLLED_TARGET_URL` to the tunnel URL and `BROWSERBASE_API_KEY` in 
 - `server/agent/`: orchestrator, safety gate, Browserbase/Stagehand operator, offline test operator
 - `server/gptzero/`: AI-writing detector interface, real and mock clients
 - `server/provenance/`: deterministic parent scoring
+- `server/research/`: discovery, evidence extraction, candidate index (Elastic/BM25), edge scoring, tree assembly
 - `server/api/`, `server/service.ts`: HTTP API and case state
 - `client/`: API client and minimal UI wiring in step 4
 

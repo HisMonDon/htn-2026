@@ -90,3 +90,50 @@ describe("API", () => {
     expect(response.json.parent_id).toBe("earlier");
   });
 });
+
+describe("research API", () => {
+  it("reconstructs a tree from a claim and serves it again by id", async () => {
+    const { CORPUS } = await import("../../data/research-corpus");
+    const { MemoryIndex } = await import("../research/candidate-index");
+    const { CorpusFetcher, CorpusSearch } = await import("../research/providers");
+    const { runResearch } = await import("../research/pipeline");
+    const handle = createApi(
+      h.service,
+      { mocks: true, operator: "offline-heuristic", detector: "mock", controlled_target_url: h.target.url },
+      {
+        research: (input) =>
+          runResearch(input, { search: new CorpusSearch(CORPUS), fetcher: new CorpusFetcher(CORPUS), index: new MemoryIndex() }),
+      },
+    );
+    const research = createServer((req, res) => void handle(req, res));
+    await new Promise<void>((resolve) => research.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(research.address() as AddressInfo).port}`;
+    try {
+      const claim = "United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato were real decisions.";
+      const created = await fetch(`${url}/api/research`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ claim }),
+      });
+      expect(created.status).toBe(200);
+      const body = (await created.json()) as any;
+      expect(body.tree.nodes.length).toBeGreaterThan(5);
+      expect(body.tree.edges.length).toBe(body.tree.nodes.length - body.tree.root_ids.length);
+      expect(body.tree.stats.retrieval).toBe("memory-bm25");
+
+      const again = (await (await fetch(`${url}/api/research/${body.id}`)).json()) as any;
+      expect(again.tree.edges).toEqual(body.tree.edges);
+
+      const bad = await fetch(`${url}/api/research`, { method: "POST", body: JSON.stringify({}) });
+      expect(bad.status).toBe(400);
+      const none = await fetch(`${url}/api/research`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ claim: "nothing citable here" }),
+      });
+      expect(none.status).toBe(422);
+    } finally {
+      await new Promise((resolve) => research.close(resolve));
+    }
+  });
+});

@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { DraftFields } from "../../shared/schema";
+import type { LineageTree } from "../../shared/tree";
+import type { ResearchInput } from "../research/pipeline";
 import { scoreParents } from "../provenance/score";
 import { HttpError, type LineageService } from "../service";
 
@@ -18,6 +21,8 @@ import { HttpError, type LineageService } from "../service";
  *   POST /api/cases/:id/nodes/:nodeId/ai-check                 GPTZero evidence on one node
  *   POST /api/cases/:id/reset                                  restore the seed
  *   POST /api/provenance/score               { target, candidates, known_mutations? }
+ *   POST /api/research                       { claim, seed_url?, fabricated_citations?, include_ai_evidence? }
+ *   GET  /api/research/:id                                     a previously built lineage tree
  */
 
 const InvestigateBody = z.object({ source_url: z.url().optional() }).strict();
@@ -29,6 +34,14 @@ const ProvenanceDoc = z.object({
   url: z.string().optional(),
   links: z.array(z.string()).optional(),
 });
+const ResearchBody = z
+  .object({
+    claim: z.string().min(1).max(2000),
+    seed_url: z.url().optional(),
+    fabricated_citations: z.array(z.string().min(1)).max(20).optional(),
+    include_ai_evidence: z.boolean().optional(),
+  })
+  .strict();
 const ProvenanceBody = z.object({
   target: ProvenanceDoc,
   candidates: z.array(ProvenanceDoc).max(200),
@@ -65,8 +78,14 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   return result.data;
 }
 
-export function createApi(service: LineageService, info: ApiInfo, options: { corsOrigin?: string | null } = {}) {
+export interface ApiOptions {
+  corsOrigin?: string | null;
+  research?: (input: ResearchInput) => Promise<LineageTree>;
+}
+
+export function createApi(service: LineageService, info: ApiInfo, options: ApiOptions = {}) {
   type Handler = (params: string[], req: IncomingMessage) => Promise<unknown>;
+  const trees = new Map<string, LineageTree>();
   const routes: [string, RegExp, Handler][] = [
     ["GET", /^\/api\/health$/, async () => ({ ok: true, ...info })],
     ["GET", /^\/api\/cases$/, async () => service.list()],
@@ -94,6 +113,32 @@ export function createApi(service: LineageService, info: ApiInfo, options: { cor
       async ([id, nodeId]) => service.checkAiWriting(id!, nodeId!),
     ],
     ["POST", /^\/api\/cases\/([^/]+)\/reset$/, async ([id]) => service.reset(id!)],
+    [
+      "POST",
+      /^\/api\/research$/,
+      async (_, req) => {
+        if (!options.research) throw new HttpError(501, "research is not configured");
+        const body = parseBody(ResearchBody, await readJson(req));
+        let tree: LineageTree;
+        try {
+          tree = await options.research(body);
+        } catch (error) {
+          throw new HttpError(422, error instanceof Error ? error.message : "research failed");
+        }
+        const id = randomUUID();
+        trees.set(id, tree);
+        return { id, tree };
+      },
+    ],
+    [
+      "GET",
+      /^\/api\/research\/([^/]+)$/,
+      async ([id]) => {
+        const tree = trees.get(id!);
+        if (!tree) throw new HttpError(404, `unknown research result "${id}"`);
+        return { id, tree };
+      },
+    ],
     [
       "POST",
       /^\/api\/provenance\/score$/,

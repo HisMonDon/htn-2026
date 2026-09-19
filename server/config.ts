@@ -17,6 +17,15 @@ export interface Config {
   /** Origins that submissions are allowed to reach. Always derived from controlledTargetUrl plus extras. */
   controlledTargetOrigins: string[];
   contactEmail: string;
+  /** Elastic retrieval for the research tree. null: in-memory BM25. */
+  elastic: {
+    url: string | null;
+    cloudId: string | null;
+    apiKey: string | null;
+    index: string;
+    semantic: boolean;
+    inferenceId: string | null;
+  } | null;
 }
 
 function flag(value: string | undefined): boolean {
@@ -56,5 +65,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       (url) => new URL(url).origin,
     ),
     contactEmail: nonEmpty(env.LINEAGE_CONTACT_EMAIL) ?? "corrections-bot@lineage.invalid",
+    elastic:
+      nonEmpty(env.ELASTIC_URL) || nonEmpty(env.ELASTIC_CLOUD_ID)
+        ? {
+            url: nonEmpty(env.ELASTIC_URL),
+            cloudId: nonEmpty(env.ELASTIC_CLOUD_ID),
+            apiKey: nonEmpty(env.ELASTIC_API_KEY),
+            index: nonEmpty(env.ELASTIC_INDEX) ?? "lineage-candidates",
+            semantic: !["0", "false", "no", "off"].includes((env.ELASTIC_SEMANTIC ?? "").trim().toLowerCase()),
+            inferenceId: nonEmpty(env.ELASTIC_INFERENCE_ID),
+          }
+        : null,
   };
 }

@@ -13,10 +13,13 @@
     "dev": "vitest",
     "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
     "target": "node --env-file-if-exists=.env --import tsx server/target/main.ts",
-    "loop": "node --env-file-if-exists=.env --import tsx server/scripts/loop.ts"
+    "loop": "node --env-file-if-exists=.env --import tsx server/scripts/loop.ts",
+    "research": "node --env-file-if-exists=.env --import tsx server/scripts/research.ts"
   },
   "dependencies": {
+    "@browserbasehq/sdk": "^2.20.0",
     "@browserbasehq/stagehand": "^4.1.0",
+    "@elastic/elasticsearch": "^9.5.1",
     "cheerio": "^1.2.0",
     "zod": "^4.6.5"
   },

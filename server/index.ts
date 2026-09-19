@@ -5,6 +5,8 @@ import { Orchestrator } from "./agent/orchestrator";
 import { createApi } from "./api/app";
 import { loadConfig } from "./config";
 import { createDetector } from "./gptzero/client";
+import { createResearchDeps } from "./research/factory";
+import { runResearch } from "./research/pipeline";
 import { LineageService } from "./service";
 import { startTarget } from "./target/server";
 
@@ -17,6 +19,7 @@ const orchestrator = new Orchestrator({
   contactEmail: config.contactEmail,
 });
 const detector = createDetector(config);
+const researchDeps = createResearchDeps(config, detector);
 const service = new LineageService({ config, orchestrator, detector, seed: [seed as never] });
 const handle = createApi(
   service,
@@ -26,7 +29,10 @@ const handle = createApi(
     detector: detector.kind,
     controlled_target_url: config.controlledTargetUrl,
   },
-  { corsOrigin: process.env.CORS_ORIGIN?.trim() || null },
+  {
+    corsOrigin: process.env.CORS_ORIGIN?.trim() || null,
+    research: (input) => runResearch(input, researchDeps),
+  },
 );
 
 const api = createServer((req, res) => void handle(req, res));
