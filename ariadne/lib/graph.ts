@@ -22,6 +22,9 @@ export interface GraphNode extends LineageTreeNode {
   /** Written by the force simulation at runtime. */
   x?: number;
   y?: number;
+  /** Pinned by the deterministic provenance layout (see lib/layout.ts). */
+  fx?: number;
+  fy?: number;
 }
 
 export interface GraphLink extends LineageTreeEdge {

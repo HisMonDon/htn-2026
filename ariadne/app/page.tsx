@@ -45,6 +45,7 @@ export default function LandingPage() {
   return (
     <main className={styles.landing}>
       {galaxyBackground}
+      <div className={styles.nebula} aria-hidden="true" />
       <div className={styles.vignette} aria-hidden="true" />
 
       <div className={styles.content}>

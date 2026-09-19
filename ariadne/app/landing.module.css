@@ -17,10 +17,27 @@
   background: #000;
 }
 
+.nebula {
+  position: absolute;
+  bottom: -10.5vh;
+  left: 50%;
+  z-index: 1;
+  width: 105vw;
+  height: 73.5vh;
+  pointer-events: none;
+  opacity: 0.6825;
+  background:
+    radial-gradient(ellipse 18% 24% at 50% 55%, rgba(255, 184, 94, 0.58), rgba(208, 94, 196, 0.2) 43%, transparent 74%),
+    radial-gradient(ellipse 48% 35% at 50% 55%, rgba(161, 83, 255, 0.22), rgba(83, 42, 148, 0.1) 46%, transparent 74%);
+  filter: blur(33.6px);
+  mix-blend-mode: screen;
+  transform: translateX(-50%);
+}
+
 .vignette {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
   background:
     radial-gradient(ellipse at center, transparent 52.5%, rgba(0, 0, 0, 0.735) 100%),
@@ -30,7 +47,7 @@
 .content {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
