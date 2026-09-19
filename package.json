@@ -10,13 +10,19 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "vitest"
+    "dev": "vitest",
+    "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
+    "target": "node --env-file-if-exists=.env --import tsx server/target/main.ts",
+    "loop": "node --env-file-if-exists=.env --import tsx server/scripts/loop.ts"
   },
   "dependencies": {
+    "@browserbasehq/stagehand": "^4.1.0",
+    "cheerio": "^1.2.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   }
