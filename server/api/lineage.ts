@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AriadneExecution, AriadneRequest, AriadneResponse } from "../../shared/ariadne";
 import { CORPUS } from "../../data/research-corpus";
-import { createBibliographyProposer } from "../gptzero/bibliography";
+import { createUpstreamSourceProposer, startProviderRun } from "../gptzero/composition";
 import { claimTerms } from "../research/discovery";
 import { assembleDocument, type CandidateDocument } from "../research/extract";
 import { ingestSourceReference } from "../research/ingestion";
@@ -32,7 +32,7 @@ export function createLineageDeps(config: { useMocks: boolean; gptzeroApiKey: st
     proposer: { analyze: async (document) => document.outbound_links.map((x) => ({ url: x })) },
     fetcher: new CorpusFetcher(CORPUS), resolver: new SearchSourceResolver(new CorpusSearch(CORPUS)),
   };
-  return { proposer: createBibliographyProposer(config), fetcher: new DirectHttpFetcher() };
+  return { proposer: createUpstreamSourceProposer(config), fetcher: new DirectHttpFetcher() };
 }
 
 export function createLineageController(deps: TraverseProvenanceDeps, mode: "live" | "mock", now = () => new Date()) {
@@ -61,6 +61,9 @@ export function createLineageController(deps: TraverseProvenanceDeps, mode: "liv
           }, { fabricated, claimTerms: claimTerms(input.claim, fabricated), discoveredVia: "submitted-text" });
         }
       }
+      // One provider-request ledger per invocation, so a bibliography -> claim-endpoint fallback
+      // counts both outbound GPTZero requests against the same budget traversal enforces.
+      if (seed) startProviderRun(deps.proposer, input.max_provider_requests ?? 10);
       if (seed) traversal = await traverseProvenance({
         seed, claim: input.claim, fabricated, maxDepth, maxProviderRequests: input.max_provider_requests,
         checkpoint: previous?.traversal.checkpoint,

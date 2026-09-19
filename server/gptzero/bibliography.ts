@@ -103,8 +103,12 @@ export class GPTZeroHttpError extends Error {
 
 /** The request did not complete within the configured timeout. */
 export class GPTZeroTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`GPTZero bibliography scan timed out after ${timeoutMs}ms`);
+  constructor(
+    timeoutMs: number,
+    /** Which GPTZero call timed out, so a composed proposer can name the right endpoint. */
+    operation = "bibliography scan",
+  ) {
+    super(`GPTZero ${operation} timed out after ${timeoutMs}ms`);
     this.name = "GPTZeroTimeoutError";
   }
 }
@@ -115,13 +119,13 @@ function isPendingAnalysis(analysis: UpstreamAnalysis): analysis is { status: "p
   return !Array.isArray(analysis) && (analysis as { status?: string }).status === "pending";
 }
 
-function authorName(author: unknown): string | null {
+export function authorName(author: unknown): string | null {
   if (typeof author === "string") return author.trim() || null;
   const parsed = z.object({ name: z.string() }).passthrough().safeParse(author);
   return parsed.success ? parsed.data.name.trim() || null : null;
 }
 
-function authorsToText(authors: z.infer<typeof Author>[]): string | null {
+export function authorsToText(authors: readonly unknown[]): string | null {
   const names = authors
     .map(authorName)
     .filter((name): name is string => name !== null);

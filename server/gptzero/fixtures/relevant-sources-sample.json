@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "note": "Synthetic, production-SHAPED sample of POST https://api.gptzero.me/v2/relevant_sources/ . Field names, nesting and types mirror a real response; every value is invented. It replaces only the external provider response so the adapter can be exercised deterministically -- acquisition, validation, traversal and mutation analysis still run for real. No graph result is encoded here.",
+  "response": {
+    "sources": [
+      {
+        "ai_detection_prediction": {
+          "ai": 0.0001,
+          "ai_paraphrased": 0,
+          "human": 0.9999,
+          "human_paraphrased": 0,
+          "mixed": 0
+        },
+        "citation_match": null,
+        "citation_object": {
+          "access_date": "2026-01-02T00:00:00.000000",
+          "arxiv_id": null,
+          "authors": ["R. Reporter", { "name": "S. Second" }],
+          "doi": null,
+          "publication_date": "2025-11-04",
+          "publication_date_granularity": "day",
+          "publisher": "Example Legal Review",
+          "title": "Synthetic opinion summary",
+          "url": "https://sources.example/opinion"
+        },
+        "citations": {
+          "apa": "Reporter, R. (2025). Synthetic opinion summary.",
+          "bibtex": "@misc{synthetic-claim-source}",
+          "chicago": "Reporter, R. Synthetic opinion summary.",
+          "ieee": "[1] R. Reporter, Synthetic opinion summary.",
+          "mla": "Reporter, R. Synthetic opinion summary."
+        },
+        "content": "Synthetic source body text. It is not validated evidence.",
+        "content_is_complete": true,
+        "date": "2025-11-04",
+        "filename": null,
+        "id": null,
+        "is_relevant": true,
+        "justification": "Provider-only assessment. Ariadne never reads this.",
+        "opensearch_rank": 1,
+        "relevance_justification": "Provider-only assessment. Ariadne never reads this.",
+        "relevance_score": 0.98,
+        "relevant_chunk": "Synthetic relevant chunk. It is not resolved source content.",
+        "reliability_score": 0.77,
+        "sourcerer_name": "synthetic_serp",
+        "stance": "support",
+        "summary": "Synthetic summary.",
+        "title": "Synthetic opinion summary",
+        "url": "https://sources.example/opinion",
+        "extra_provider_field": { "preserved": true }
+      },
+      {
+        "ai_detection_prediction": null,
+        "citation_match": null,
+        "citation_object": {
+          "access_date": "2026-01-02T00:00:00.000000",
+          "arxiv_id": null,
+          "authors": [],
+          "doi": null,
+          "publication_date": null,
+          "publication_date_granularity": "unknown",
+          "publisher": null,
+          "title": "Synthetic coverage article",
+          "url": "https://coverage.example/story"
+        },
+        "citations": {
+          "apa": "(n.d.). Synthetic coverage article.",
+          "bibtex": "@misc{synthetic-coverage}",
+          "chicago": "Synthetic coverage article.",
+          "ieee": "[2] Synthetic coverage article.",
+          "mla": "Synthetic coverage article."
+        },
+        "content": "Synthetic coverage body text.",
+        "content_is_complete": null,
+        "date": null,
+        "filename": null,
+        "id": null,
+        "is_relevant": null,
+        "justification": null,
+        "opensearch_rank": 2,
+        "relevance_justification": null,
+        "relevance_score": 0.81,
+        "relevant_chunk": null,
+        "reliability_score": null,
+        "sourcerer_name": "synthetic_serp",
+        "stance": "contradict",
+        "summary": null,
+        "title": "Synthetic coverage article",
+        "url": "https://coverage.example/story"
+      }
+    ]
+  }
+}
