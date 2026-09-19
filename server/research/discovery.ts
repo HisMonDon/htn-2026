@@ -109,29 +109,17 @@ export async function discover(
     }
     if (attempted.has(key) || documents.size >= maxDocuments) return null;
     attempted.add(key);
-    // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
-    if (via === "seed") console.log(`[pdf-debug] handing seed url to fetcher: ${url}`);
     const page = await providers.fetcher.fetch(url);
-    if (via === "seed") console.log(`[pdf-debug] seed fetch result: ${page ? `kind=${page.kind} url=${page.url}` : "null (fetch failed or skipped)"}`);
     if (!page) return null;
     fetched += 1;
 
     let parsed: ParsedDocument;
     if (page.kind === "pdf") {
-      // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
-      console.log(`[pdf-debug] PDF detected: ${page.url} (${page.bytes.byteLength} bytes)`);
-      console.log(`[pdf-debug] invoking extractPdfPages for ${page.url}`);
       const extraction = await extractPdfPages(page.bytes);
       if (!extraction.ok) {
-        console.log(`[pdf-debug] PDF extraction failed: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
         extractionFailures.push(`${page.url}: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
         return null;
       }
-      console.log(
-        `[pdf-debug] PDF parsed: page_count=${extraction.page_count} total_chars=${extraction.text.length} per_page=[${extraction.pages
-          .map((p) => `p${p.page}:${p.text.length}`)
-          .join(", ")}]`,
-      );
       parsed = parsePdfDocument(page.url, extraction);
     } else {
       parsed = parseHtmlPage(page.url, page.html, published ?? undefined);
@@ -142,8 +130,6 @@ export async function discover(
       claimTerms: claimTerms(input.claim, fabricated),
       discoveredVia: via,
     });
-    // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
-    if (page.kind === "pdf") console.log(`[pdf-debug] normalized document created: id=${doc.id} title="${doc.title}" url=${doc.url}`);
     documents.set(doc.id, doc);
     pages.set(doc.id, { parsed, via });
     return doc;

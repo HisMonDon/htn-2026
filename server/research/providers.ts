@@ -55,8 +55,6 @@ export class BrowserbaseFetcher implements PageFetcher {
       const response = await this.client.fetchAPI.create({ url, allowRedirects: true, format: "raw" });
       if (response.statusCode >= 400 || typeof response.content !== "string") return null;
       const kind = detectContentKind({ contentType: response.contentType, url });
-      // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this line.
-      console.log(`[pdf-debug] fetch ${url} -> status=${response.statusCode} content-type=${response.contentType ?? "(none)"} detected=${kind}`);
       if (kind === "html") {
         const html =
           response.encoding === "base64" ? Buffer.from(response.content, "base64").toString("utf8") : response.content;
@@ -70,9 +68,7 @@ export class BrowserbaseFetcher implements PageFetcher {
         return { url, kind: "pdf", bytes };
       }
       return null;
-    } catch (error) {
-      // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this line.
-      console.log(`[pdf-debug] fetch ${url} threw: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
       return null;
     }
   }

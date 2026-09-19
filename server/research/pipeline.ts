@@ -35,12 +35,6 @@ export async function runResearch(input: ResearchInput, deps: ResearchDeps): Pro
     throw new Error("no fabricated citations could be identified from the claim or seed; pass fabricated_citations");
   }
 
-  // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
-  if (input.seed_url) {
-    const seedDoc = discovered.documents.find((doc) => doc.id === discovered.seedId);
-    console.log(`[pdf-debug] seed document reaches candidate/evidence pipeline: ${seedDoc ? `yes (id=${seedDoc.id})` : "no"}`);
-  }
-
   let aiEvidence: Map<string, AiEvidence> | undefined;
   if (input.include_ai_evidence && deps.detector) {
     aiEvidence = new Map();
