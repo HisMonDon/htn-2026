@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-19T19:14:20.000Z",
+  "inputHash": "b448b56185d3cfa9cfb4b1abe82b3fd8ac8342b18387c3f9edfc46c96ea9523b",
+  "response": {
+    "version": 2,
+    "bibliographic_citations": [
+      {
+        "id": 0,
+        "indices": { "start": 0, "end": 0 },
+        "text": "Synthetic as-cited authority reference.",
+        "citation_type": "legal",
+        "citation_exists": {
+          "score": 0,
+          "status": "synthetic",
+          "justification": "Synthetic fixture only.",
+          "hallucination_label": null,
+          "hallucination_explanation": null
+        },
+        "relevant_to_topic": { "score": 0, "justification": null, "is_relevant": false },
+        "ai_scan": { "predicted_class": "human", "score": 0 },
+        "claim_reference": { "has_reference": false },
+        "citation_object": {
+          "access_date": null,
+          "arxiv_id": null,
+          "authors": [],
+          "doi": null,
+          "publication_date": null,
+          "publisher": null,
+          "raw_text": "Synthetic as-cited authority reference.",
+          "title": "Synthetic authority",
+          "url": null
+        }
+      }
+    ],
+    "claims": [
+      {
+        "id": 0,
+        "bibliographic_citation_ids": [0],
+        "text": "Synthetic Cohen demonstration claim.",
+        "claim_type": "factual",
+        "indices": { "start": 0, "end": 0 },
+        "agree_with_citation": { "stance": "unknown", "justification": null },
+        "is_cited_in_bibliography": {
+          "score": 0,
+          "check_worthy": true,
+          "is_cited": true,
+          "justification": "Synthetic fixture only."
+        }
+      }
+    ],
+    "sources": [
+      {
+        "id": 0,
+        "citation_id": 0,
+        "claim_id": 0,
+        "sourcerer_name": "synthetic-cache",
+        "citation_object": {
+          "access_date": "2026-09-19",
+          "arxiv_id": null,
+          "authors": [],
+          "doi": null,
+          "publication_date": null,
+          "publication_date_granularity": "unknown",
+          "publisher": null,
+          "title": "Synthetic source identity",
+          "url": "https://www.law.cornell.edu/uscode/text/18/3583"
+        },
+        "authors": [],
+        "url": "https://www.law.cornell.edu/uscode/text/18/3583",
+        "relevance_score": 0,
+        "citations": {
+          "apa": "Synthetic APA citation.",
+          "bibtex": "@misc{synthetic}",
+          "chicago": "Synthetic Chicago citation.",
+          "ieee": "[1] Synthetic citation.",
+          "mla": "Synthetic MLA citation."
+        },
+        "title": "Synthetic supervised-release authority",
+        "citation_match": null,
+        "content": "Synthetic cached source content. It is not validated evidence.",
+        "date": "2026-09-19",
+        "justification": "Synthetic fixture only.",
+        "relevance_justification": null,
+        "relevant_chunk": "Synthetic relevant chunk. It is not resolved source content.",
+        "stance": "unknown",
+        "extra_source_field": { "preserved": true }
+      }
+    ],
+    "raw": {
+      "reference_map": {
+        "bibliographic_citations": [],
+        "intext_citations": []
+      },
+      "uncited_claims": []
+    },
+    "id": "synthetic-demo-scan",
+    "inputText": "United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato were real Second Circuit decisions supporting early termination of supervised release."
+  }
+}
