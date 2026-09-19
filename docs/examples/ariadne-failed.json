@@ -1,0 +1,62 @@
+{
+  "id": "synthetic-failed",
+  "status": "failed",
+  "root": {
+    "id": "unavailable-synthetic-failed",
+    "url": "https://synthetic.test/missing",
+    "title": null,
+    "date": null,
+    "text": null
+  },
+  "nodes": [],
+  "edges": [],
+  "terminations": [],
+  "warnings": [],
+  "errors": [
+    {
+      "stage": "fetch",
+      "source": "https://synthetic.test/missing",
+      "category": "http-404",
+      "message": "The source was not found.",
+      "recoverable": false
+    }
+  ],
+  "execution": {
+    "proposer": "mock",
+    "fallbacks": []
+  },
+  "pending": [],
+  "resume_url": null,
+  "tree": {
+    "seed": {
+      "claim": "The fictional amber lantern study reported improved local outcomes.",
+      "url": "https://synthetic.test/missing",
+      "fabricated_citations": []
+    },
+    "generated_at": "2026-09-19T12:00:00.000Z",
+    "root_ids": [],
+    "nodes": [],
+    "edges": [],
+    "rejected_edges": [],
+    "excluded": [],
+    "status": "failed",
+    "diagnostics": [
+      {
+        "stage": "fetch",
+        "source": "https://synthetic.test/missing",
+        "category": "http-404",
+        "message": "The source was not found.",
+        "recoverable": false
+      }
+    ],
+    "stats": {
+      "pipeline": "recursive-provenance",
+      "max_depth": 5,
+      "sources_expanded": 0,
+      "proposals_received": 0,
+      "fetched": 0,
+      "fetch_failures": 0,
+      "analysis_requests": 0
+    }
+  }
+}

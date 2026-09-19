@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
+import { AriadneRequest } from "../../shared/ariadne";
 import { DraftFields } from "../../shared/schema";
-import type { LineageTree } from "../../shared/tree";
-import { ResearchStageError, type ResearchInput } from "../research/pipeline";
 import { scoreParents } from "../provenance/score";
 import { HttpError, type LineageService } from "../service";
+import type { LineageController } from "./lineage";
 
 /**
  * JSON API for the UI (step 4).
@@ -34,24 +33,6 @@ const ProvenanceDoc = z.object({
   url: z.string().optional(),
   links: z.array(z.string()).optional(),
 });
-const ResearchBody = z
-  .object({
-    claim: z.string().min(1).max(2000),
-    seed_url: z.url().optional(),
-    seed_source: z
-      .object({
-        url: z.url().optional().nullable(),
-        title: z.string().min(1).max(1000).optional().nullable(),
-        citation: z.string().min(1).max(2000).optional().nullable(),
-        author: z.string().min(1).max(500).optional().nullable(),
-      })
-      .strict()
-      .optional()
-      .nullable(),
-    fabricated_citations: z.array(z.string().min(1)).max(20).optional(),
-    include_ai_evidence: z.boolean().optional(),
-  })
-  .strict();
 const ProvenanceBody = z.object({
   target: ProvenanceDoc,
   candidates: z.array(ProvenanceDoc).max(200),
@@ -90,12 +71,11 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
 
 export interface ApiOptions {
   corsOrigin?: string | null;
-  research?: (input: ResearchInput) => Promise<LineageTree>;
+  lineage?: LineageController;
 }
 
 export function createApi(service: LineageService, info: ApiInfo, options: ApiOptions = {}) {
   type Handler = (params: string[], req: IncomingMessage) => Promise<unknown>;
-  const trees = new Map<string, LineageTree>();
   const routes: [string, RegExp, Handler][] = [
     ["GET", /^\/api\/health$/, async () => ({ ok: true, ...info })],
     ["GET", /^\/api\/cases$/, async () => service.list()],
@@ -127,27 +107,25 @@ export function createApi(service: LineageService, info: ApiInfo, options: ApiOp
       "POST",
       /^\/api\/research$/,
       async (_, req) => {
-        if (!options.research) throw new HttpError(501, "research is not configured");
-        const body = parseBody(ResearchBody, await readJson(req));
-        let tree: LineageTree;
-        try {
-          tree = await options.research(body);
-        } catch (error) {
-          if (error instanceof ResearchStageError) throw new HttpError(422, error.message, error.stage);
-          throw new HttpError(422, error instanceof Error ? error.message : "research failed");
-        }
-        const id = randomUUID();
-        trees.set(id, tree);
-        return { id, status: tree.status, tree };
+        if (!options.lineage) throw new HttpError(501, "recursive lineage is not configured");
+        return options.lineage.create(parseBody(AriadneRequest, await readJson(req)));
       },
     ],
     [
       "GET",
       /^\/api\/research\/([^/]+)$/,
       async ([id]) => {
-        const tree = trees.get(id!);
-        if (!tree) throw new HttpError(404, `unknown research result "${id}"`);
-        return { id, status: tree.status, tree };
+        if (!options.lineage) throw new HttpError(501, "recursive lineage is not configured");
+        return options.lineage.get(id!);
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/research\/([^/]+)\/resume$/,
+      async ([id], req) => {
+        if (!options.lineage) throw new HttpError(501, "recursive lineage is not configured");
+        parseBody(z.object({}).strict(), await readJson(req));
+        return options.lineage.resume(id!);
       },
     ],
     [

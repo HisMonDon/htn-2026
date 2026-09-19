@@ -106,8 +106,9 @@ Then set `CONTROLLED_TARGET_URL` to the tunnel URL and `BROWSERBASE_API_KEY` in 
 | POST | `/api/cases/:id/nodes/:nodeId/ai-check` | GPTZero evidence on one chain node |
 | POST | `/api/cases/:id/reset` | restore the seed |
 | POST | `/api/provenance/score` | `{ target, candidates, known_mutations? }` |
-| POST | `/api/research` | `{ claim, seed_url?, seed_source?, fabricated_citations?, include_ai_evidence? }` -> `{ id, tree }` |
-| GET | `/api/research/:id` | a previously built tree |
+| POST | `/api/research` | Recursive GPTZero proposal → traversal → validation/mutation API; [request, response and frontend handoff](docs/ariadne-api.md) |
+| GET | `/api/research/:id` | Saved normalized Ariadne response, including the compatibility tree |
+| POST | `/api/research/:id/resume` | `{}`; resume pending recursive traversal after its retry delay |
 
 ## Layout
 

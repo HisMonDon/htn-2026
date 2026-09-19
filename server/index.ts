@@ -3,10 +3,9 @@ import seed from "../data/cohen-bard.json" with { type: "json" };
 import { createOperatorFactory } from "./agent/factory";
 import { Orchestrator } from "./agent/orchestrator";
 import { createApi } from "./api/app";
+import { createLineageController, createLineageDeps } from "./api/lineage";
 import { loadConfig } from "./config";
 import { createDetector } from "./gptzero/client";
-import { createResearchDeps } from "./research/factory";
-import { runResearch } from "./research/pipeline";
 import { LineageService } from "./service";
 import { startTarget } from "./target/server";
 
@@ -19,7 +18,7 @@ const orchestrator = new Orchestrator({
   contactEmail: config.contactEmail,
 });
 const detector = createDetector(config);
-const researchDeps = createResearchDeps(config, detector);
+const lineage = createLineageController(createLineageDeps(config), config.useMocks ? "mock" : "live");
 const service = new LineageService({ config, orchestrator, detector, seed: [seed as never] });
 const handle = createApi(
   service,
@@ -31,7 +30,7 @@ const handle = createApi(
   },
   {
     corsOrigin: process.env.CORS_ORIGIN?.trim() || null,
-    research: (input) => runResearch(input, researchDeps),
+    lineage,
   },
 );
 

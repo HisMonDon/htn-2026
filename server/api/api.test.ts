@@ -93,16 +93,12 @@ describe("API", () => {
 
 describe("research API", () => {
   it("reconstructs a tree from a claim and serves it again by id", async () => {
-    const { CORPUS } = await import("../../data/research-corpus");
-    const { MemoryIndex } = await import("../research/candidate-index");
-    const { CorpusFetcher, CorpusSearch } = await import("../research/providers");
-    const { runResearch } = await import("../research/pipeline");
+    const { createLineageController, createLineageDeps } = await import("./lineage");
     const handle = createApi(
       h.service,
       { mocks: true, operator: "offline-heuristic", detector: "mock", controlled_target_url: h.target.url },
       {
-        research: (input) =>
-          runResearch(input, { search: new CorpusSearch(CORPUS), fetcher: new CorpusFetcher(CORPUS), index: new MemoryIndex() }),
+        lineage: createLineageController(createLineageDeps({ useMocks: true, gptzeroApiKey: null }), "mock"),
       },
     );
     const research = createServer((req, res) => void handle(req, res));
@@ -113,14 +109,14 @@ describe("research API", () => {
       const created = await fetch(`${url}/api/research`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ claim }),
+        body: JSON.stringify({ claim, seed_url: "https://daily-ledger.test/2023/12/29/cohen-bard-fake-cases", fabricated_citations: ["United States v. Figueroa-Florez", "United States v. Ortiz", "United States v. Amato"] }),
       });
       expect(created.status).toBe(200);
       const body = (await created.json()) as any;
       expect(body.status).toBe("complete");
       expect(body.tree.status).toBe("complete");
       expect(body.tree.diagnostics).toEqual([]);
-      expect(body.tree.nodes.length).toBeGreaterThan(5);
+      expect(body.tree.nodes.length).toBe(5);
       // A validated DAG may have merge points, so it can carry more than one incoming edge per
       // non-root while still keeping every accepted relationship unique and acyclic.
       expect(body.tree.edges.length).toBeGreaterThanOrEqual(body.tree.nodes.length - body.tree.root_ids.length);
@@ -128,7 +124,8 @@ describe("research API", () => {
         body.tree.edges.length,
       );
       expect(body.tree.edges.every((edge: any) => Array.isArray(edge.claim_mutations))).toBe(true);
-      expect(body.tree.stats.retrieval).toBe("memory-bm25");
+      expect(body.tree.stats.pipeline).toBe("recursive-provenance");
+      expect(body.execution.proposer).toBe("mock");
 
       const again = (await (await fetch(`${url}/api/research/${body.id}`)).json()) as any;
       expect(again.tree.edges).toEqual(body.tree.edges);
@@ -140,8 +137,8 @@ describe("research API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ claim: "nothing citable here" }),
       });
-      expect(none.status).toBe(422);
-      expect((await none.json()).status).toBe("failed");
+      expect(none.status).toBe(200);
+      expect((await none.json()).status).toBe("complete");
     } finally {
       await new Promise((resolve) => research.close(resolve));
     }

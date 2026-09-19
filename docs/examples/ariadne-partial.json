@@ -1,0 +1,395 @@
+{
+  "id": "synthetic-partial",
+  "status": "partial",
+  "root": {
+    "id": "synthetic-downstream",
+    "url": "https://synthetic.test/downstream",
+    "title": "Downstream report",
+    "date": "2024-03-03T00:00:00.000Z",
+    "text": "The fictional amber lantern study reported improved local outcomes. The report says these results apply nationwide."
+  },
+  "nodes": [
+    {
+      "id": "synthetic-downstream",
+      "canonical_id": "sha256:ed2f0c6e9c4f8366f5e4fdbc4b45af4d485fa9bed0a93d18de86946847c40b7c",
+      "content_fingerprint": "ed2f0c6e9c4f8366f5e4fdbc4b45af4d485fa9bed0a93d18de86946847c40b7c",
+      "url": "https://synthetic.test/downstream",
+      "mirror_urls": [],
+      "publisher": "synthetic.test",
+      "title": "Downstream report",
+      "timestamp": "2024-03-03T00:00:00.000Z",
+      "timestamp_source": "meta",
+      "timestamp_confidence": "strong",
+      "earliest_possible": "2024-03-03T00:00:00.000Z",
+      "timestamp_conflict": null,
+      "passage": "The fictional amber lantern study reported improved local outcomes. The report says these results apply nationwide.",
+      "outbound_links": [
+        "https://synthetic.test/upstream"
+      ],
+      "fabricated_citations": [],
+      "mutations": [],
+      "ai_evidence": null,
+      "discovered_via": [
+        "api-seed"
+      ],
+      "is_seed": true,
+      "source_kind": "fetched"
+    },
+    {
+      "id": "synthetic-upstream",
+      "canonical_id": "sha256:7167ce232e4e8897df608a4b9cee46cf5d6802a558a07330ee42bcd611a6f701",
+      "content_fingerprint": "7167ce232e4e8897df608a4b9cee46cf5d6802a558a07330ee42bcd611a6f701",
+      "url": "https://synthetic.test/upstream",
+      "mirror_urls": [],
+      "publisher": "synthetic.test",
+      "title": "Upstream report",
+      "timestamp": "2024-03-01T00:00:00.000Z",
+      "timestamp_source": "meta",
+      "timestamp_confidence": "strong",
+      "earliest_possible": "2024-03-01T00:00:00.000Z",
+      "timestamp_conflict": null,
+      "passage": "The fictional amber lantern study reported improved local outcomes. Researchers reviewed only a small local sample.",
+      "outbound_links": [],
+      "fabricated_citations": [],
+      "mutations": [],
+      "ai_evidence": null,
+      "discovered_via": [
+        "upstream proposal from synthetic-downstream"
+      ],
+      "is_seed": false,
+      "source_kind": "fetched"
+    }
+  ],
+  "edges": [
+    {
+      "id": "786d9cd5789f0c0206821989",
+      "source": "synthetic-upstream",
+      "target": "synthetic-downstream",
+      "reference_url": "https://synthetic.test/upstream",
+      "status": "validated",
+      "ariadne_score": 0.712,
+      "score_method": "traversal-scoreEdge",
+      "type": "propagation",
+      "evidence": {
+        "basis": "synthetic-downstream links to synthetic-upstream; 4 copied 6-word phrases (outside quotations) found in no other possible parent; word overlap 0.333",
+        "explicit_link": true,
+        "shared_mutations": [],
+        "rare_shared_phrases": 4,
+        "similarity": 0.333,
+        "temporal": {
+          "parent_time": "2024-03-01T00:00:00.000Z",
+          "child_time": "2024-03-03T00:00:00.000Z",
+          "gap_days": 2,
+          "ordering": "from-link"
+        }
+      },
+      "inspection": {
+        "validator": "lineage-deterministic-v1",
+        "role": "supplementary-inspection",
+        "signals": [
+          {
+            "id": "distinct_artifact",
+            "status": "passed",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "separate artifacts (sha256:7167ce23… and sha256:ed2f0c6e…)",
+            "evidence": []
+          },
+          {
+            "id": "chronology",
+            "status": "passed",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "synthetic-downstream links to synthetic-upstream, so it was written after it",
+            "evidence": [
+              "synthetic-upstream: 2024-03-01",
+              "synthetic-downstream: 2024-03-03"
+            ]
+          },
+          {
+            "id": "explicit_link",
+            "status": "passed",
+            "weight": 0.6,
+            "disqualifying": false,
+            "detail": "synthetic-downstream links to synthetic-upstream",
+            "evidence": [
+              "https://synthetic.test/upstream"
+            ]
+          },
+          {
+            "id": "citation_reference",
+            "status": "failed",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "synthetic-downstream does not name synthetic-upstream in its text",
+            "evidence": []
+          },
+          {
+            "id": "canonical_metadata",
+            "status": "not-applicable",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "the upstream reference named no URL, so canonical identity was not checked against one",
+            "evidence": []
+          },
+          {
+            "id": "shared_fabrications",
+            "status": "failed",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "no fabricated citation or invented entity is known for this pair",
+            "evidence": []
+          },
+          {
+            "id": "shared_phrasing",
+            "status": "passed",
+            "weight": 0.2,
+            "disqualifying": false,
+            "detail": "4 6-word sequence(s) outside quotations appear in synthetic-upstream and in no other candidate",
+            "evidence": [
+              "amber lantern study reported improved local",
+              "fictional amber lantern study reported improved",
+              "lantern study reported improved local outcomes",
+              "the fictional amber lantern study reported"
+            ]
+          },
+          {
+            "id": "passage_overlap",
+            "status": "failed",
+            "weight": 0,
+            "disqualifying": false,
+            "detail": "42% of the passage occurs in synthetic-upstream, below the 50% needed to call it the same text",
+            "evidence": []
+          }
+        ],
+        "evidence": {
+          "parent": {
+            "id": "synthetic-upstream",
+            "url": "https://synthetic.test/upstream",
+            "canonical_id": "sha256:7167ce232e4e8897df608a4b9cee46cf5d6802a558a07330ee42bcd611a6f701",
+            "mirror_urls": [],
+            "publisher": "synthetic.test",
+            "title": "Upstream report",
+            "timestamp": "2024-03-01T00:00:00.000Z",
+            "timestamp_source": "meta",
+            "timestamp_confidence": "strong",
+            "timestamp_conflict": null,
+            "passage": "The fictional amber lantern study reported improved local outcomes. Researchers reviewed only a small local sample."
+          },
+          "child": {
+            "id": "synthetic-downstream",
+            "url": "https://synthetic.test/downstream",
+            "canonical_id": "sha256:ed2f0c6e9c4f8366f5e4fdbc4b45af4d485fa9bed0a93d18de86946847c40b7c",
+            "mirror_urls": [],
+            "publisher": "synthetic.test",
+            "title": "Downstream report",
+            "timestamp": "2024-03-03T00:00:00.000Z",
+            "timestamp_source": "meta",
+            "timestamp_confidence": "strong",
+            "timestamp_conflict": null,
+            "passage": "The fictional amber lantern study reported improved local outcomes. The report says these results apply nationwide."
+          },
+          "temporal": {
+            "parent_time": "2024-03-01T00:00:00.000Z",
+            "child_time": "2024-03-03T00:00:00.000Z",
+            "gap_days": 2,
+            "ordering": "from-link"
+          },
+          "matched_links": [
+            "https://synthetic.test/upstream"
+          ],
+          "matched_citations": [],
+          "shared_fabrications": [],
+          "shared_phrases": [
+            "amber lantern study reported improved local",
+            "fictional amber lantern study reported improved",
+            "lantern study reported improved local outcomes",
+            "the fictional amber lantern study reported"
+          ],
+          "rare_shared_phrases": 4,
+          "passage_overlap": 0.417,
+          "similarity": 0.333,
+          "validated_passage": "The fictional amber lantern study reported improved local outcomes. The report says these results apply nationwide.",
+          "passage_source": "extracted-passage",
+          "span_verified": false
+        }
+      },
+      "claim_mutations": [
+        {
+          "type": "added",
+          "summary": "Added claim: “The report says these results apply nationwide.”",
+          "before": null,
+          "after": "The report says these results apply nationwide."
+        },
+        {
+          "type": "omitted",
+          "summary": "Omitted claim: “Researchers reviewed only a small local sample.”",
+          "before": "Researchers reviewed only a small local sample.",
+          "after": null
+        }
+      ],
+      "recursed": true
+    },
+    {
+      "id": "efcc5b46d21af039286ee998",
+      "source": null,
+      "target": "synthetic-upstream",
+      "reference_url": "https://synthetic.test/missing",
+      "status": "rejected",
+      "ariadne_score": null,
+      "score_method": "traversal-scoreEdge",
+      "reason": "The source was not found.",
+      "termination": "fetch-failure"
+    }
+  ],
+  "terminations": [
+    {
+      "source_id": "synthetic-downstream",
+      "url": "https://synthetic.test/downstream",
+      "depth": 0,
+      "reason": "accepted-parents",
+      "detail": null
+    },
+    {
+      "source_id": "synthetic-upstream",
+      "url": "https://synthetic.test/upstream",
+      "depth": 1,
+      "reason": "all-proposals-rejected",
+      "detail": null
+    }
+  ],
+  "warnings": [
+    {
+      "stage": "fetch",
+      "source": "https://synthetic.test/missing",
+      "category": "http-404",
+      "message": "The source was not found.",
+      "recoverable": false
+    }
+  ],
+  "errors": [],
+  "execution": {
+    "proposer": "mock",
+    "fallbacks": []
+  },
+  "pending": [],
+  "resume_url": null,
+  "tree": {
+    "seed": {
+      "claim": "The fictional amber lantern study reported improved local outcomes.",
+      "url": "https://synthetic.test/downstream",
+      "fabricated_citations": []
+    },
+    "generated_at": "2026-09-19T12:00:00.000Z",
+    "root_ids": [
+      "synthetic-upstream"
+    ],
+    "nodes": [
+      {
+        "id": "synthetic-downstream",
+        "canonical_id": "sha256:ed2f0c6e9c4f8366f5e4fdbc4b45af4d485fa9bed0a93d18de86946847c40b7c",
+        "content_fingerprint": "ed2f0c6e9c4f8366f5e4fdbc4b45af4d485fa9bed0a93d18de86946847c40b7c",
+        "url": "https://synthetic.test/downstream",
+        "mirror_urls": [],
+        "publisher": "synthetic.test",
+        "title": "Downstream report",
+        "timestamp": "2024-03-03T00:00:00.000Z",
+        "timestamp_source": "meta",
+        "timestamp_confidence": "strong",
+        "earliest_possible": "2024-03-03T00:00:00.000Z",
+        "timestamp_conflict": null,
+        "passage": "The fictional amber lantern study reported improved local outcomes. The report says these results apply nationwide.",
+        "outbound_links": [
+          "https://synthetic.test/upstream"
+        ],
+        "fabricated_citations": [],
+        "mutations": [],
+        "ai_evidence": null,
+        "discovered_via": [
+          "api-seed"
+        ],
+        "is_seed": true,
+        "source_kind": "fetched"
+      },
+      {
+        "id": "synthetic-upstream",
+        "canonical_id": "sha256:7167ce232e4e8897df608a4b9cee46cf5d6802a558a07330ee42bcd611a6f701",
+        "content_fingerprint": "7167ce232e4e8897df608a4b9cee46cf5d6802a558a07330ee42bcd611a6f701",
+        "url": "https://synthetic.test/upstream",
+        "mirror_urls": [],
+        "publisher": "synthetic.test",
+        "title": "Upstream report",
+        "timestamp": "2024-03-01T00:00:00.000Z",
+        "timestamp_source": "meta",
+        "timestamp_confidence": "strong",
+        "earliest_possible": "2024-03-01T00:00:00.000Z",
+        "timestamp_conflict": null,
+        "passage": "The fictional amber lantern study reported improved local outcomes. Researchers reviewed only a small local sample.",
+        "outbound_links": [],
+        "fabricated_citations": [],
+        "mutations": [],
+        "ai_evidence": null,
+        "discovered_via": [
+          "upstream proposal from synthetic-downstream"
+        ],
+        "is_seed": false,
+        "source_kind": "fetched"
+      }
+    ],
+    "edges": [
+      {
+        "parent_id": "synthetic-upstream",
+        "child_id": "synthetic-downstream",
+        "type": "propagation",
+        "confidence": 0.712,
+        "basis": "synthetic-downstream links to synthetic-upstream; 4 copied 6-word phrases (outside quotations) found in no other possible parent; word overlap 0.333",
+        "shared_mutations": [],
+        "claim_mutations": [
+          {
+            "type": "added",
+            "summary": "Added claim: “The report says these results apply nationwide.”",
+            "before": null,
+            "after": "The report says these results apply nationwide."
+          },
+          {
+            "type": "omitted",
+            "summary": "Omitted claim: “Researchers reviewed only a small local sample.”",
+            "before": "Researchers reviewed only a small local sample.",
+            "after": null
+          }
+        ],
+        "explicit_link": true,
+        "rare_shared_phrases": 4,
+        "similarity": 0.333,
+        "temporal": {
+          "parent_time": "2024-03-01T00:00:00.000Z",
+          "child_time": "2024-03-03T00:00:00.000Z",
+          "gap_days": 2,
+          "ordering": "from-link"
+        },
+        "alternatives": []
+      }
+    ],
+    "rejected_edges": [],
+    "excluded": [],
+    "status": "partial",
+    "diagnostics": [
+      {
+        "stage": "fetch",
+        "source": "https://synthetic.test/missing",
+        "category": "http-404",
+        "message": "The source was not found.",
+        "recoverable": false
+      }
+    ],
+    "stats": {
+      "pipeline": "recursive-provenance",
+      "max_depth": 5,
+      "sources_expanded": 2,
+      "proposals_received": 2,
+      "fetched": 1,
+      "fetch_failures": 1,
+      "analysis_requests": 2
+    }
+  }
+}
