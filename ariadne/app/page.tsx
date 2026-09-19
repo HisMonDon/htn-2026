@@ -57,7 +57,7 @@ export default function LandingPage() {
           </h1>
 
           <p className={styles.subhead}>
-            trace every thread of research to its origin.
+            trace every thread of research to pinpoint AI hallucinations.
           </p>
         </header>
 
