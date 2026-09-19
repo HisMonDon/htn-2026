@@ -70,6 +70,7 @@ export const ACTION_STEPS = [
   "fill_fields",
   "await_approval",
   "submit",
+  "reopen",
   "verify",
 ] as const;
 
@@ -136,13 +137,13 @@ export const Case = z
     value.action_log.forEach((entry, index) => {
       if (
         entry.step === "submit" &&
-        entry.status !== "pending" &&
+        (entry.status === "attempted" || entry.status === "completed") &&
         value.approval.status !== "approved"
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["action_log", index, "status"],
-          message: 'a "submit" step may only run when approval.status is "approved"',
+          message: 'a "submit" step may only be attempted or completed when approval.status is "approved"',
         });
       }
       if (entry.step === "verify" && !submitCompleted) {
