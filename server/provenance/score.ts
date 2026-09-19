@@ -22,6 +22,9 @@ export interface ProvenanceDoc {
   url?: string;
   /** Outbound links or citations found in the document. */
   links?: string[];
+  title?: string;
+  publisher?: string;
+  sourceReferences?: string[];
 }
 
 export interface ScoreOptions {
@@ -31,6 +34,7 @@ export interface ScoreOptions {
 
 export interface CandidateSignals {
   explicit_link: boolean;
+  explicit_reference: boolean;
   shared_mutations: string[];
   rare_shared_phrases: number;
   similarity: number;
@@ -115,6 +119,14 @@ function linksTo(target: ProvenanceDoc, candidate: ProvenanceDoc): boolean {
   return target.text.toLowerCase().includes(wanted);
 }
 
+function referencesSource(target: ProvenanceDoc, candidate: ProvenanceDoc): boolean {
+  const references = (target.sourceReferences ?? []).map(normalize).filter(Boolean);
+  const identities = [candidate.id, candidate.title ?? "", candidate.publisher ?? "", candidate.url ?? ""]
+    .map(normalize)
+    .filter(Boolean);
+  return references.some((reference) => identities.includes(reference));
+}
+
 function noisyOr(weights: number[]): number {
   return 1 - weights.reduce((product, weight) => product * (1 - weight), 1);
 }
@@ -162,7 +174,14 @@ export function scoreParents(
         eligible: false,
         confidence: 0,
         basis: `excluded: published after ${target.id}, so it cannot be its parent`,
-        signals: { explicit_link: false, shared_mutations: [], rare_shared_phrases: 0, similarity: 0, same_timestamp: false },
+        signals: {
+          explicit_link: false,
+          explicit_reference: false,
+          shared_mutations: [],
+          rare_shared_phrases: 0,
+          similarity: 0,
+          same_timestamp: false,
+        },
       };
     }
 
@@ -175,6 +194,7 @@ export function scoreParents(
         : [];
     const signals: CandidateSignals = {
       explicit_link: linksTo(target, candidate),
+      explicit_reference: referencesSource(target, candidate),
       shared_mutations: shared,
       rare_shared_phrases: rarePhrases.length,
       similarity: round(jaccard(targetTrigrams, shingles(candidate.text, 3))),
@@ -186,18 +206,19 @@ export function scoreParents(
       noisyOr(shared.map((mutation) => WEIGHT_MUTATION / (mutationCounts.get(mutation) ?? 1))),
     );
     const weights = [
-      signals.explicit_link ? WEIGHT_LINK : 0,
+      signals.explicit_link || signals.explicit_reference ? WEIGHT_LINK : 0,
       mutationWeight,
       Math.min(CAP_PHRASES, WEIGHT_PHRASE * rarePhrases.length),
       Math.min(CAP_SIMILARITY, signals.similarity * 0.3),
     ];
     let confidence = noisyOr(weights);
-    const strong = signals.explicit_link || shared.length > 0;
+    const strong = signals.explicit_link || signals.explicit_reference || shared.length > 0;
     if (!strong) confidence = Math.min(confidence, rarePhrases.length > 0 ? CAP_PHRASING_ONLY : CAP_WEAK);
     if (signals.same_timestamp) confidence = Math.min(confidence, CAP_SAME_TIME);
 
     const reasons: string[] = [];
     if (signals.explicit_link) reasons.push(`${target.id} links to ${candidate.url}`);
+    if (signals.explicit_reference) reasons.push(`${target.id} explicitly identifies ${candidate.id} as a source`);
     for (const mutation of shared) {
       const count = mutationCounts.get(mutation) ?? 1;
       reasons.push(
@@ -247,7 +268,9 @@ export function scoreParents(
     confidence = round(confidence * AMBIGUITY_FACTOR);
     basis += `; ambiguous with ${runnerUp.candidate_id} (${runnerUp.confidence})`;
   }
-  const propagation = (best.signals.explicit_link || best.signals.shared_mutations.length > 0) && confidence >= 0.5;
+  const propagation =
+    (best.signals.explicit_link || best.signals.explicit_reference || best.signals.shared_mutations.length > 0) &&
+    confidence >= 0.5;
   return {
     parent_id: best.candidate_id,
     confidence,

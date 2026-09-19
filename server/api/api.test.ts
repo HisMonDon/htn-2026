@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import candidates from "../../data/cohen-bard-candidates.json";
 import { CASE_ID, harness, type Harness } from "../test-helpers";
 import { createApi } from "./app";
 
@@ -88,5 +89,22 @@ describe("API", () => {
       known_mutations: ["United States v. Ortiz"],
     });
     expect(response.json.parent_id).toBe("earlier");
+  });
+
+  it("reconstructs a provenance tree from a noisy candidate pool", async () => {
+    const seed = candidates.find((document) => document.id === "schwartz-motion")!;
+    const response = await call("POST", "/api/provenance/tree", {
+      seed,
+      candidates,
+      known_mutations: ["United States v. Figueroa-Florez", "United States v. Ortiz", "United States v. Amato"],
+      limit: 20,
+    });
+    expect(response.status).toBe(200);
+    expect(response.json.edges.map((edge: { source: string; target: string }) => `${edge.source}->${edge.target}`)).toEqual([
+      "bard-generation->cohen-emails",
+      "cohen-emails->schwartz-motion",
+      "schwartz-motion->court-finding",
+    ]);
+    expect(response.json.rejected_edges.length).toBeGreaterThan(0);
   });
 });

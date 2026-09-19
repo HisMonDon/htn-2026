@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
-import { DraftFields } from "../../shared/schema";
+import { AiEvidence, DraftFields } from "../../shared/schema";
+import { MockDocumentIndex } from "../provenance/document-index";
 import { scoreParents } from "../provenance/score";
+import { reconstructLineage } from "../provenance/tree";
 import { HttpError, type LineageService } from "../service";
 
 /**
@@ -28,11 +30,36 @@ const ProvenanceDoc = z.object({
   text: z.string(),
   url: z.string().optional(),
   links: z.array(z.string()).optional(),
+  title: z.string().optional(),
+  publisher: z.string().optional(),
+  sourceReferences: z.array(z.string()).optional(),
 });
 const ProvenanceBody = z.object({
   target: ProvenanceDoc,
   candidates: z.array(ProvenanceDoc).max(200),
   known_mutations: z.array(z.string()).max(100).optional(),
+});
+const ResearchDocument = z.object({
+  id: z.string().min(1),
+  url: z.url(),
+  publisher: z.string().min(1),
+  timestamp: z.iso.datetime({ offset: true }),
+  title: z.string().min(1),
+  relevantPassage: z.string().min(1),
+  claim: z.string().optional(),
+  fabricatedCitations: z.array(z.string()).optional(),
+  rareMutations: z.array(z.string()).optional(),
+  explicitLinks: z.array(z.url()).optional(),
+  sourceReferences: z.array(z.string()).optional(),
+  embedding: z.array(z.number()).optional(),
+  aiEvidence: AiEvidence.nullable().optional(),
+});
+const TreeBody = z.object({
+  seed: ResearchDocument,
+  candidates: z.array(ResearchDocument).max(200),
+  known_mutations: z.array(z.string()).max(100).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+  min_confidence: z.number().min(0).max(1).optional(),
 });
 
 export interface ApiInfo {
@@ -100,6 +127,19 @@ export function createApi(service: LineageService, info: ApiInfo, options: { cor
       async (_, req) => {
         const body = parseBody(ProvenanceBody, await readJson(req));
         return scoreParents(body.target, body.candidates, { knownMutations: body.known_mutations ?? [] });
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/provenance\/tree$/,
+      async (_, req) => {
+        const body = parseBody(TreeBody, await readJson(req));
+        const index = new MockDocumentIndex(body.candidates);
+        return reconstructLineage(body.seed, index, {
+          knownMutations: body.known_mutations,
+          limit: body.limit,
+          minConfidence: body.min_confidence,
+        });
       },
     ],
   ];
