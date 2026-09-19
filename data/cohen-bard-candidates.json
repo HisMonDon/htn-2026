@@ -1,0 +1,135 @@
+[
+  {
+    "id": "bard-generation",
+    "url": "https://www.washingtonpost.com/technology/2023/12/29/michael-cohen-ai-google-bard-fake-citations/",
+    "publisher": "Google Bard",
+    "timestamp": "2023-11-25T00:00:00Z",
+    "title": "Bard response containing fabricated early-termination cases",
+    "relevantPassage": "Google Bard produced United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato as purported Second Circuit decisions supporting early termination of supervised release.",
+    "claim": "The three named decisions were real Second Circuit cases supporting early termination of supervised release.",
+    "fabricatedCitations": [
+      "United States v. Figueroa-Florez",
+      "United States v. Ortiz",
+      "United States v. Amato"
+    ],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [],
+    "aiEvidence": null
+  },
+  {
+    "id": "cohen-emails",
+    "url": "https://apnews.com/article/777ace9cc34aa0e56398fd47a1d6b420",
+    "publisher": "Michael Cohen",
+    "timestamp": "2023-11-25T00:00:00Z",
+    "title": "Cohen sends Bard cases to Schwartz",
+    "relevantPassage": "Cohen said he obtained United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato from Google Bard and sent the cases and summaries to David M. Schwartz.",
+    "fabricatedCitations": [
+      "United States v. Figueroa-Florez",
+      "United States v. Ortiz",
+      "United States v. Amato"
+    ],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [
+      "bard-generation",
+      "Google Bard"
+    ],
+    "aiEvidence": null
+  },
+  {
+    "id": "schwartz-motion",
+    "url": "https://www.courtlistener.com/docket/7709756/united-states-v-cohen/",
+    "publisher": "David M. Schwartz",
+    "timestamp": "2023-11-29T00:00:00Z",
+    "title": "Motion for early termination of supervised release",
+    "relevantPassage": "The motion relied on United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato as Second Circuit decisions supporting early termination of supervised release.",
+    "fabricatedCitations": [
+      "United States v. Figueroa-Florez",
+      "United States v. Ortiz",
+      "United States v. Amato"
+    ],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [
+      "cohen-emails",
+      "Michael Cohen"
+    ],
+    "aiEvidence": null
+  },
+  {
+    "id": "court-finding",
+    "url": "https://www.casemine.com/judgement/us/65fd095d77ed7b02f70a5d35",
+    "publisher": "U.S. District Court for the Southern District of New York",
+    "timestamp": "2023-12-12T00:00:00Z",
+    "title": "Order addressing nonexistent citations",
+    "relevantPassage": "The court addressed the November 29 motion and found that United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato did not exist.",
+    "fabricatedCitations": [
+      "United States v. Figueroa-Florez",
+      "United States v. Ortiz",
+      "United States v. Amato"
+    ],
+    "rareMutations": [],
+    "explicitLinks": [
+      "https://www.courtlistener.com/docket/7709756/united-states-v-cohen/"
+    ],
+    "sourceReferences": [
+      "schwartz-motion"
+    ],
+    "aiEvidence": null
+  },
+  {
+    "id": "early-termination-guide",
+    "url": "https://example.org/federal-supervision-guide",
+    "publisher": "Example Legal Guide",
+    "timestamp": "2023-11-10T00:00:00Z",
+    "title": "Guide to early termination of federal supervision",
+    "relevantPassage": "Federal courts consider conduct, compliance, rehabilitation, and the interests of justice when deciding whether to terminate supervised release early.",
+    "fabricatedCitations": [],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [],
+    "aiEvidence": null
+  },
+  {
+    "id": "ortiz-name-collision",
+    "url": "https://example.org/ortiz-name-collision",
+    "publisher": "Example Case Digest",
+    "timestamp": "2023-11-28T00:00:00Z",
+    "title": "A separate case digest mentioning Ortiz",
+    "relevantPassage": "A case digest briefly references United States v. Ortiz while discussing an unrelated sentencing issue and does not mention Figueroa-Florez or Amato.",
+    "fabricatedCitations": [
+      "United States v. Ortiz"
+    ],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [],
+    "aiEvidence": null
+  },
+  {
+    "id": "near-copy-without-citations",
+    "url": "https://example.org/near-copy",
+    "publisher": "Example Commentary",
+    "timestamp": "2023-12-05T00:00:00Z",
+    "title": "Commentary on early termination",
+    "relevantPassage": "The motion argues that early termination is warranted because of exemplary post-release conduct, compliance, rehabilitation, and community service.",
+    "fabricatedCitations": [],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [],
+    "aiEvidence": null
+  },
+  {
+    "id": "late-generic-summary",
+    "url": "https://example.org/late-summary",
+    "publisher": "Example Newswire",
+    "timestamp": "2023-12-20T00:00:00Z",
+    "title": "Later summary of supervised-release dispute",
+    "relevantPassage": "A later summary says a supervised-release motion drew scrutiny over questionable legal support, without reproducing the disputed citations or naming a source document.",
+    "fabricatedCitations": [],
+    "rareMutations": [],
+    "explicitLinks": [],
+    "sourceReferences": [],
+    "aiEvidence": null
+  }
+]
