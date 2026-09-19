@@ -183,7 +183,7 @@ describe("correction rules", () => {
 });
 
 describe("submit gating", () => {
-  for (const status of ["attempted", "completed", "failed"]) {
+  for (const status of ["attempted", "completed"]) {
     it(`rejects a submit step with status ${status} while approval is pending`, () => {
       const value = withApproval("pending");
       value.action_log = [log("submit", status)];
@@ -203,9 +203,23 @@ describe("submit gating", () => {
     expect(safeParseCase(value).success).toBe(true);
   });
 
+  it("allows a failed submit log while approval is pending", () => {
+    const value = withApproval("pending");
+    value.action_log = [log("submit", "failed")];
+    expect(safeParseCase(value).success).toBe(true);
+  });
+
   it("allows attempted and completed submit steps when approved", () => {
     const value = withApproval("approved");
     value.action_log = [log("submit", "attempted"), log("submit", "completed")];
+    expect(safeParseCase(value).success).toBe(true);
+  });
+});
+
+describe("action steps", () => {
+  it("accepts reopen as an action step", () => {
+    const value = baseCase();
+    value.action_log = [log("reopen", "pending")];
     expect(safeParseCase(value).success).toBe(true);
   });
 });
