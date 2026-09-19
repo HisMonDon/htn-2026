@@ -1,0 +1,85 @@
+{
+  "id": "cohen-bard-2023",
+  "title": "Michael Cohen / Google Bard fabricated case citations",
+  "falsehood": {
+    "claim": "United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato were real Second Circuit decisions supporting early termination of supervised release.",
+    "why_false": "The Southern District of New York later found that the three cited decisions did not exist.",
+    "independent_evidence_urls": [
+      "https://www.casemine.com/judgement/us/65fd095d77ed7b02f70a5d35",
+      "https://apnews.com/article/05a138cca16445aa63992134faa7cf14"
+    ]
+  },
+  "chain": [
+    {
+      "id": "bard-generation",
+      "url": "https://www.washingtonpost.com/technology/2023/12/29/michael-cohen-ai-google-bard-fake-citations/",
+      "publisher": "Google Bard",
+      "timestamp": "2023-11-25T00:00:00Z",
+      "excerpt": "Cohen obtained three purported early-termination decisions from Google Bard and believed the generated citations were real.",
+      "ai_evidence": null,
+      "edge": null
+    },
+    {
+      "id": "cohen-emails",
+      "url": "https://apnews.com/article/777ace9cc34aa0e56398fd47a1d6b420",
+      "publisher": "Michael Cohen",
+      "timestamp": "2023-11-25T00:00:00Z",
+      "excerpt": "Cohen sent the three generated cases and summaries to attorney David M. Schwartz for use in the supervised-release motion.",
+      "ai_evidence": null,
+      "edge": {
+        "parent_id": "bard-generation",
+        "type": "propagation",
+        "confidence": 0.99,
+        "basis": "Cohen's declaration and the court's later opinion describe the citations as originating in Bard and then being sent to Schwartz by email."
+      }
+    },
+    {
+      "id": "schwartz-motion",
+      "url": "https://www.courtlistener.com/docket/7709756/united-states-v-cohen/",
+      "publisher": "David M. Schwartz",
+      "timestamp": "2023-11-29T00:00:00Z",
+      "excerpt": "Schwartz filed Cohen's motion for early termination of supervised release containing the three nonexistent case citations.",
+      "ai_evidence": null,
+      "edge": {
+        "parent_id": "cohen-emails",
+        "type": "propagation",
+        "confidence": 0.99,
+        "basis": "The court's opinion states that Schwartz incorporated the cases Cohen sent and filed the motion on November 29, 2023."
+      }
+    },
+    {
+      "id": "court-finding",
+      "url": "https://www.casemine.com/judgement/us/65fd095d77ed7b02f70a5d35",
+      "publisher": "U.S. District Court for the Southern District of New York",
+      "timestamp": "2023-12-12T00:00:00Z",
+      "excerpt": "Judge Jesse Furman issued an order to show cause after determining that the cited cases did not exist.",
+      "ai_evidence": null,
+      "edge": {
+        "parent_id": "schwartz-motion",
+        "type": "propagation",
+        "confidence": 1,
+        "basis": "The December 12 order directly responded to the November 29 filing and required an explanation for its nonexistent citations."
+      }
+    }
+  ],
+  "correction": {
+    "route_type": "none",
+    "route_url": null,
+    "policy_summary": "No correction route has been investigated yet.",
+    "draft_fields": {
+      "subject": "",
+      "body": ""
+    },
+    "draft_ready": false
+  },
+  "approval": {
+    "status": "pending",
+    "decided_at": null
+  },
+  "action_log": [],
+  "verification": {
+    "status": "not_started",
+    "checked_at": null,
+    "observed_change": null
+  }
+}
