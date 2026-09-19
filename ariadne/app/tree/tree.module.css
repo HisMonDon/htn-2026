@@ -1,0 +1,215 @@
+.workspace {
+  position: relative;
+  width: 100%;
+  height: 100svh;
+  overflow: hidden;
+  color: #f7f3ff;
+  background: #05030a;
+  isolation: isolate;
+}
+
+.workspace::before {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: "";
+  opacity: 0.26;
+  background-image:
+    linear-gradient(rgba(226, 190, 114, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(226, 190, 114, 0.045) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(ellipse at center, black 12%, transparent 78%);
+}
+
+.workspace::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: "";
+  box-shadow: inset 0 0 180px 24px rgba(0, 0, 0, 0.74);
+}
+
+.header {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.35rem 1.5rem;
+  pointer-events: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brandMark {
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  color: #efc978;
+  border: 1px solid rgba(239, 201, 120, 0.3);
+  border-radius: 0.8rem;
+  background: rgba(31, 20, 43, 0.64);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.06), 0 14px 40px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(18px);
+}
+
+.eyebrow {
+  margin: 0 0 0.08rem;
+  color: rgba(226, 215, 238, 0.46);
+  font: 500 0.58rem/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: #fbf7ff;
+  font: 400 1.58rem/1 var(--font-neuton), Georgia, serif;
+  letter-spacing: -0.025em;
+}
+
+.title span {
+  color: rgba(231, 218, 242, 0.48);
+  font-style: italic;
+}
+
+.target {
+  max-width: min(48vw, 40rem);
+  padding: 0.7rem 0.9rem;
+  color: rgba(239, 232, 245, 0.64);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 0.85rem;
+  background: rgba(12, 8, 20, 0.68);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), 0 18px 50px rgba(0, 0, 0, 0.22);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  backdrop-filter: blur(18px);
+}
+
+.targetLabel {
+  margin-right: 0.45rem;
+  color: #d9ae5f;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.targetId {
+  margin-left: 0.65rem;
+  color: rgba(226, 215, 238, 0.32);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.6rem;
+}
+
+.graphRegion {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  cursor: grab;
+}
+
+.graphRegion:active {
+  cursor: grabbing;
+}
+
+.legend {
+  position: absolute;
+  z-index: 20;
+  bottom: 1.35rem;
+  left: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  align-items: center;
+  padding: 0.7rem 0.9rem;
+  color: rgba(226, 215, 238, 0.53);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.85rem;
+  background: rgba(12, 8, 20, 0.72);
+  font: 500 0.62rem/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(18px);
+}
+
+.legendDot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.stateCard {
+  position: relative;
+  z-index: 8;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.15rem;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.stateIcon {
+  display: grid;
+  width: 4rem;
+  height: 4rem;
+  place-items: center;
+  color: #e4bd6c;
+  border: 1px solid rgba(228, 189, 108, 0.22);
+  border-radius: 1.25rem;
+  background: rgba(35, 22, 48, 0.52);
+  box-shadow: 0 0 60px rgba(183, 102, 224, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.stateText {
+  margin: 0;
+  color: rgba(239, 232, 245, 0.7);
+  font-family: var(--font-neuton), Georgia, serif;
+  font-size: 1.2rem;
+}
+
+.stateMeta {
+  max-width: 38rem;
+  margin: -0.65rem 0 0;
+  color: rgba(226, 215, 238, 0.4);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  .header {
+    padding: 1rem;
+  }
+
+  .target {
+    max-width: 52vw;
+  }
+
+  .targetLabel,
+  .targetId,
+  .eyebrow {
+    display: none;
+  }
+
+  .legend {
+    right: 1rem;
+    bottom: 1rem;
+    left: 1rem;
+    justify-content: center;
+  }
+}

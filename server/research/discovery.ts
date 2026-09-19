@@ -1,4 +1,5 @@
-import { canonicalUrl, extractDocument, type CandidateDocument } from "./extract";
+import { assembleDocument, canonicalUrl, parseHtmlPage, type CandidateDocument, type ParsedDocument } from "./extract";
+import { extractPdfPages, parsePdfDocument } from "./pdf";
 import type { PageFetcher, SearchProvider } from "./providers";
 import { canonicalText, extractCaseNames, matchKey, tokens } from "./text";
 
@@ -28,6 +29,8 @@ export interface DiscoveryResult {
   fabricated: string[];
   queries: string[];
   failedQueries: string[];
+  /** Fetched but could not be turned into a document, e.g. an encrypted or scanned PDF. Nonfatal. */
+  extractionFailures: string[];
   fetched: number;
   seedId: string | null;
 }
@@ -90,10 +93,12 @@ export async function discover(
   const documents = new Map<string, CandidateDocument>();
   const queries: string[] = [];
   const failedQueries: string[] = [];
+  const extractionFailures: string[] = [];
   const attempted = new Set<string>();
   let fetched = 0;
   let fabricated = input.fabricated?.length ? [...input.fabricated] : extractCaseNames(input.claim);
-  const pages = new Map<string, { html: string; url: string; published: string | null; via: string }>();
+  // Cached per document so the final re-extraction pass (below) never re-downloads or re-parses.
+  const pages = new Map<string, { parsed: ParsedDocument; via: string }>();
 
   async function visit(url: string, via: string, published: string | null): Promise<CandidateDocument | null> {
     const key = canonicalUrl(url);
@@ -104,19 +109,43 @@ export async function discover(
     }
     if (attempted.has(key) || documents.size >= maxDocuments) return null;
     attempted.add(key);
+    // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
+    if (via === "seed") console.log(`[pdf-debug] handing seed url to fetcher: ${url}`);
     const page = await providers.fetcher.fetch(url);
+    if (via === "seed") console.log(`[pdf-debug] seed fetch result: ${page ? `kind=${page.kind} url=${page.url}` : "null (fetch failed or skipped)"}`);
     if (!page) return null;
     fetched += 1;
-    const doc = extractDocument({
-      url: page.url,
-      html: page.html,
+
+    let parsed: ParsedDocument;
+    if (page.kind === "pdf") {
+      // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
+      console.log(`[pdf-debug] PDF detected: ${page.url} (${page.bytes.byteLength} bytes)`);
+      console.log(`[pdf-debug] invoking extractPdfPages for ${page.url}`);
+      const extraction = await extractPdfPages(page.bytes);
+      if (!extraction.ok) {
+        console.log(`[pdf-debug] PDF extraction failed: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
+        extractionFailures.push(`${page.url}: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
+        return null;
+      }
+      console.log(
+        `[pdf-debug] PDF parsed: page_count=${extraction.page_count} total_chars=${extraction.text.length} per_page=[${extraction.pages
+          .map((p) => `p${p.page}:${p.text.length}`)
+          .join(", ")}]`,
+      );
+      parsed = parsePdfDocument(page.url, extraction);
+    } else {
+      parsed = parseHtmlPage(page.url, page.html, published ?? undefined);
+    }
+
+    const doc = assembleDocument(parsed, {
       fabricated,
       claimTerms: claimTerms(input.claim, fabricated),
-      searchPublished: published ?? undefined,
       discoveredVia: via,
     });
+    // TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
+    if (page.kind === "pdf") console.log(`[pdf-debug] normalized document created: id=${doc.id} title="${doc.title}" url=${doc.url}`);
     documents.set(doc.id, doc);
-    pages.set(doc.id, { html: page.html, url: page.url, published, via });
+    pages.set(doc.id, { parsed, via });
     return doc;
   }
 
@@ -179,18 +208,12 @@ export async function discover(
     .slice(0, maxPhraseQueries);
   for (const phrase of phrases) await runQuery(`"${phrase}"`);
 
-  // Re-extract with the final citation list so every page is judged by the same criteria.
+  // Re-assemble with the final citation list so every page is judged by the same criteria. The
+  // cached ParsedDocument means this never re-downloads or re-parses a PDF or HTML page.
   const finalTerms = claimTerms(input.claim, fabricated);
   const finalDocs = [...documents.values()].map((doc) => {
     const page = pages.get(doc.id)!;
-    const again = extractDocument({
-      url: page.url,
-      html: page.html,
-      fabricated,
-      claimTerms: finalTerms,
-      searchPublished: page.published ?? undefined,
-      discoveredVia: page.via,
-    });
+    const again = assembleDocument(page.parsed, { fabricated, claimTerms: finalTerms, discoveredVia: page.via });
     return { ...again, discovered_via: doc.discovered_via };
   });
 
@@ -199,6 +222,7 @@ export async function discover(
     fabricated,
     queries,
     failedQueries,
+    extractionFailures,
     fetched,
     seedId,
   };

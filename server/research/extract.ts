@@ -129,47 +129,37 @@ function findTimestamp(
   return { timestamp: null, source: "none" };
 }
 
-export interface ExtractOptions {
+/**
+ * Fields any acquisition path (HTML today, PDF as of step 6) can produce deterministically, before
+ * the claim-specific case-name/passage/citation logic in {@link assembleDocument} runs. Keeping
+ * this split means a new content type only has to know how to become a `ParsedDocument`; everything
+ * downstream of that is shared, so the provenance scorer never has to know where a document came from.
+ */
+export interface ParsedDocument {
   url: string;
-  html: string;
+  title: string;
+  publisher: string;
+  timestamp: string | null;
+  timestamp_source: CandidateDocument["timestamp_source"];
+  text: string;
+  outbound_links: string[];
+}
+
+export interface AssembleOptions {
   fabricated: string[];
   /** Words from the claim, used to pick the relevant passage when no citation is present. */
   claimTerms: string[];
-  searchPublished?: string;
   discoveredVia: string;
 }
 
-export function extractDocument(options: ExtractOptions): CandidateDocument {
-  const $ = cheerio.load(options.html);
-  const url = canonicalUrl(options.url);
-  const title = canonicalText($('meta[property="og:title"]').attr("content") ?? $("title").first().text() ?? $("h1").first().text());
+/** Case names, fabricated-citation matches and the best passage: the same for every content type. */
+export function assembleDocument(parsed: ParsedDocument, options: AssembleOptions): CandidateDocument {
+  const paragraphs = parsed.text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
-  let publisher = $('meta[property="og:site_name"]').attr("content")?.trim() ?? null;
-  if (!publisher) {
-    for (const element of $('script[type="application/ld+json"]').toArray()) {
-      try {
-        publisher = jsonLdPublisher(JSON.parse($(element).text()));
-      } catch {
-        publisher = null;
-      }
-      if (publisher) break;
-    }
-  }
-  publisher ||= new URL(url).hostname.replace(/^www\./, "");
-
-  const { timestamp, source } = findTimestamp($, url, options.searchPublished);
-
-  const content = $("article").length ? $("article") : $("main").length ? $("main") : $("body");
-  content.find("nav, header, footer, script, style, aside").remove();
-
-  const paragraphs = content
-    .find("p, li, blockquote")
-    .toArray()
-    .map((element) => canonicalText($(element).text()))
-    .filter((text) => text.length > 0);
-  const text = paragraphs.join("\n");
-
-  const caseNames = extractCaseNames(text);
+  const caseNames = extractCaseNames(parsed.text);
   const fabricated = new Set<string>();
   const variants = new Set<string>();
   for (const name of caseNames) {
@@ -189,33 +179,93 @@ export function extractDocument(options: ExtractOptions): CandidateDocument {
   const best = [...scored].sort((a, b) => b.score - a.score || a.index - b.index)[0];
   const passage = best && best.score > 0 ? best.paragraph : (paragraphs[0] ?? "");
 
-  const outbound = new Set<string>();
-  content.find("a[href]").each((_, element) => {
-    const href = $(element).attr("href") ?? "";
-    let resolved: URL;
-    try {
-      resolved = new URL(href, url);
-    } catch {
-      return;
-    }
-    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return;
-    const canonical = canonicalUrl(resolved.toString());
-    if (canonical !== url) outbound.add(canonical);
-  });
-
   return {
-    id: documentId(url),
-    url,
-    publisher,
-    title,
-    timestamp,
-    timestamp_source: source,
-    text,
+    id: documentId(parsed.url),
+    url: parsed.url,
+    publisher: parsed.publisher,
+    title: parsed.title,
+    timestamp: parsed.timestamp,
+    timestamp_source: parsed.timestamp_source,
+    text: parsed.text,
     passage,
-    outbound_links: [...outbound],
+    outbound_links: parsed.outbound_links,
     case_names: caseNames,
     fabricated_citations: [...fabricated],
     citation_variants: [...variants],
     discovered_via: [options.discoveredVia],
   };
+}
+
+export function parseHtmlPage(url: string, html: string, searchPublished?: string): ParsedDocument {
+  const $ = cheerio.load(html);
+  const canonical = canonicalUrl(url);
+  const title = canonicalText($('meta[property="og:title"]').attr("content") ?? $("title").first().text() ?? $("h1").first().text());
+
+  let publisher = $('meta[property="og:site_name"]').attr("content")?.trim() ?? null;
+  if (!publisher) {
+    for (const element of $('script[type="application/ld+json"]').toArray()) {
+      try {
+        publisher = jsonLdPublisher(JSON.parse($(element).text()));
+      } catch {
+        publisher = null;
+      }
+      if (publisher) break;
+    }
+  }
+  publisher ||= new URL(canonical).hostname.replace(/^www\./, "");
+
+  const { timestamp, source } = findTimestamp($, canonical, searchPublished);
+
+  const content = $("article").length ? $("article") : $("main").length ? $("main") : $("body");
+  content.find("nav, header, footer, script, style, aside").remove();
+
+  const text = content
+    .find("p, li, blockquote")
+    .toArray()
+    .map((element) => canonicalText($(element).text()))
+    .filter((paragraph) => paragraph.length > 0)
+    .join("\n");
+
+  const outbound = new Set<string>();
+  content.find("a[href]").each((_, element) => {
+    const href = $(element).attr("href") ?? "";
+    let resolved: URL;
+    try {
+      resolved = new URL(href, canonical);
+    } catch {
+      return;
+    }
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return;
+    const link = canonicalUrl(resolved.toString());
+    if (link !== canonical) outbound.add(link);
+  });
+
+  return {
+    url: canonical,
+    title,
+    publisher,
+    timestamp,
+    timestamp_source: source,
+    text,
+    outbound_links: [...outbound],
+  };
+}
+
+export interface ExtractOptions {
+  url: string;
+  html: string;
+  fabricated: string[];
+  /** Words from the claim, used to pick the relevant passage when no citation is present. */
+  claimTerms: string[];
+  searchPublished?: string;
+  discoveredVia: string;
+}
+
+export function extractDocument(options: ExtractOptions): CandidateDocument {
+  const parsed = parseHtmlPage(options.url, options.html, options.searchPublished);
+  return assembleDocument(parsed, {
+    fabricated: options.fabricated,
+    claimTerms: options.claimTerms,
+    discoveredVia: options.discoveredVia,
+  });
 }

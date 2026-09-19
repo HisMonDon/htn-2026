@@ -3,9 +3,11 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Route } from "lucide-react";
 import { createResearch } from "@/lib/api";
 import { toGraphData, ROLE_COLOR, ROLE_LABEL, type GraphData, type NodeRole } from "@/lib/graph";
+import AriadneBackdrop from "@/components/AriadneBackdrop";
+import styles from "./tree.module.css";
 
 const ROLE_LEGEND = (Object.keys(ROLE_LABEL) as NodeRole[]).map((role) => ({
   label: ROLE_LABEL[role],
@@ -15,7 +17,7 @@ const ROLE_LEGEND = (Object.keys(ROLE_LABEL) as NodeRole[]).map((role) => ({
 // DYNAMICALLY import the graph to prevent Next.js SSR crashes
 const GraphVisualizer = dynamic(() => import("@/components/GraphVisualizer"), {
   ssr: false,
-  loading: () => <p className="p-6 text-gray-400">Loading physics engine...</p>,
+  loading: () => <p className={styles.stateText}>Unspooling the thread...</p>,
 });
 
 type Phase = "idle" | "researching" | "done" | "error";
@@ -67,24 +69,34 @@ function TreeView() {
   }, [query]);
 
   return (
-    <main className="w-full h-screen bg-black text-white overflow-hidden relative">
-      {/* Header Overlay */}
-      <div className="absolute top-0 left-0 w-full p-6 z-10 pointer-events-none flex justify-between items-center">
-        <h2 className="text-2xl font-bold tracking-tighter text-white/80">
-          Ariadne <span className="text-gray-500 font-normal">/</span> Trace
-        </h2>
-        <div className="text-sm text-gray-400 bg-white/5 px-4 py-2 rounded-full border border-white/10 backdrop-blur-md">
-          Target: <span className="text-white">{query ?? "none"}</span>
-          {researchId && <span className="ml-3 text-xs text-gray-600">id {researchId.slice(0, 8)}</span>}
+    <main className={styles.workspace}>
+      <AriadneBackdrop />
+
+      <header className={styles.header}>
+        <div className={styles.brand}>
+          <div className={styles.brandMark}>
+            <Route size={19} strokeWidth={1.45} />
+          </div>
+          <div>
+            <p className={styles.eyebrow}>Provenance map</p>
+            <h1 className={styles.title}>
+              ariadne <span>/ trace</span>
+            </h1>
+          </div>
         </div>
-      </div>
+        <div className={styles.target}>
+          <span className={styles.targetLabel}>Following</span>
+          <span>{query ?? "No claim selected"}</span>
+          {researchId && <span className={styles.targetId}>#{researchId.slice(0, 8)}</span>}
+        </div>
+      </header>
 
       {/* Role legend - provenance roles, not a truth classification. */}
       {query && phase === "done" && (
-        <div className="absolute bottom-6 left-6 z-10 flex flex-wrap gap-4 text-xs text-gray-400 bg-black/60 px-4 py-2 rounded-full border border-white/10 backdrop-blur-md">
+        <div className={styles.legend}>
           {ROLE_LEGEND.map(({ label, color }) => (
             <span key={label} className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+              <span className={styles.legendDot} style={{ backgroundColor: color, color }} />
               {label}
             </span>
           ))}
@@ -92,29 +104,34 @@ function TreeView() {
       )}
 
       {!query && (
-        <div className="flex items-center justify-center w-full h-full">
-          <p className="text-lg text-gray-400">No claim provided. Start from the home page.</p>
+        <div className={styles.stateCard}>
+          <div className={styles.stateIcon}><Route size={27} strokeWidth={1.3} /></div>
+          <p className={styles.stateText}>No thread to follow yet.</p>
+          <p className={styles.stateMeta}>Start from the home page and give Ariadne a claim to trace.</p>
         </div>
       )}
 
       {query && phase !== "done" && phase !== "error" && (
-        <div className="flex flex-col items-center justify-center w-full h-full space-y-6">
-          <Loader2 className="w-12 h-12 text-white animate-spin opacity-50" />
-          <p className="text-lg text-gray-400 animate-pulse">{status}</p>
+        <div className={styles.stateCard}>
+          <div className={styles.stateIcon}>
+            <Loader2 className="animate-spin" size={27} strokeWidth={1.35} />
+          </div>
+          <p className={styles.stateText}>{status}</p>
+          <p className={styles.stateMeta}>Searching for sources, dates, and the relationships between them.</p>
         </div>
       )}
 
       {query && phase === "error" && (
-        <div className="flex flex-col items-center justify-center w-full h-full space-y-4 px-6">
-          <AlertTriangle className="w-12 h-12 text-red-500" />
-          <p className="text-lg text-red-400">Failed to trace network.</p>
-          <p className="text-sm text-gray-500 max-w-xl text-center break-words">{error}</p>
+        <div className={styles.stateCard}>
+          <div className={styles.stateIcon}><AlertTriangle size={27} strokeWidth={1.35} /></div>
+          <p className={styles.stateText}>The thread broke before the map was complete.</p>
+          <p className={styles.stateMeta}>{error}</p>
         </div>
       )}
 
       {/* Graph Render */}
       {query && phase === "done" && graphData && (
-        <div className="w-full h-full cursor-grab active:cursor-grabbing">
+        <div className={styles.graphRegion}>
           <GraphVisualizer data={graphData} />
         </div>
       )}
@@ -126,8 +143,11 @@ export default function TreePage() {
   return (
     <Suspense
       fallback={
-        <main className="flex items-center justify-center w-full h-screen bg-black text-white">
-          <Loader2 className="w-12 h-12 animate-spin opacity-50" />
+        <main className={styles.workspace}>
+          <AriadneBackdrop />
+          <div className={styles.stateCard}>
+            <div className={styles.stateIcon}><Loader2 className="animate-spin" size={27} /></div>
+          </div>
         </main>
       }
     >

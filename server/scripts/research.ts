@@ -53,6 +53,10 @@ const deps = createResearchDeps(config, createDetector(config));
 console.log(`discovery: ${deps.search.kind}; retrieval: ${deps.index.kind}`);
 console.log(`claim: ${claim}\n`);
 
+// TEMPORARY DIAGNOSTIC LOGGING (step 6 PDF verification) - safe to delete this block.
+const seedUrlArg = arg("--seed-url") ?? null;
+console.log(`[pdf-debug] parsed seed url: ${seedUrlArg ?? "(none)"}`);
+
 const tree = await runResearch(
   {
     claim,

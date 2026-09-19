@@ -92,6 +92,8 @@ export const LineageTree = z
       retrieval: z.enum(["elastic-hybrid", "elastic-lexical", "memory-bm25"]),
       queries: z.array(z.string()),
       failed_queries: z.array(z.string()),
+      /** Fetched but not turned into a document, e.g. an encrypted or scanned PDF. Nonfatal. */
+      extraction_failures: z.array(z.string()),
       fetched: z.number().int().min(0),
       candidates: z.number().int().min(0),
       pairs_scored: z.number().int().min(0),

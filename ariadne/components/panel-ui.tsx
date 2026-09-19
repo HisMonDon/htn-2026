@@ -8,7 +8,8 @@ import { X, ExternalLink } from "lucide-react";
 export function Drawer({ open, children }: { open: boolean; children: React.ReactNode }) {
   return (
     <div
-      className={`absolute top-0 right-0 h-full w-96 bg-black/80 backdrop-blur-xl border-l border-white/10 p-6 text-white transition-transform duration-300 ease-in-out z-50 overflow-y-auto ${
+      aria-hidden={!open}
+      className={`absolute top-0 right-0 z-50 h-full w-96 overflow-y-auto border-l border-[#e6bd6a]/15 bg-[#0b0712]/92 p-6 text-white shadow-[-24px_0_80px_rgba(0,0,0,0.38)] backdrop-blur-2xl transition-transform duration-300 ease-in-out ${
         open ? "translate-x-0" : "translate-x-full"
       }`}
     >

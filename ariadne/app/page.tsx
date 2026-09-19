@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Galaxy from "@/components/Galaxy";
+import SpiralGalaxy from "@/components/SpiralGalaxy";
 import SearchBox from "@/components/SearchBox";
 import styles from "./landing.module.css";
 
@@ -46,6 +47,7 @@ export default function LandingPage() {
     <main className={styles.landing}>
       {galaxyBackground}
       <div className={styles.nebula} aria-hidden="true" />
+      <SpiralGalaxy className={styles.spiralGalaxy} />
       <div className={styles.vignette} aria-hidden="true" />
 
       <div className={styles.content}>

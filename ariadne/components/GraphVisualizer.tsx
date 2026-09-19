@@ -1,8 +1,22 @@
 "use client";
 
-import React, { useRef, useCallback, useMemo, useState } from "react";
+import React, { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import ForceGraph, { type ForceGraphMethods } from "react-force-graph-2d";
-import { X, ExternalLink, AlertTriangle, BrainCircuit, Sprout, Clock, ArrowDown, GitBranch, FilterX } from "lucide-react";
+import {
+  X,
+  ExternalLink,
+  AlertTriangle,
+  BrainCircuit,
+  Sprout,
+  Clock,
+  ArrowDown,
+  GitBranch,
+  FilterX,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  MoveRight,
+} from "lucide-react";
 import {
   ROLE_COLOR,
   ROLE_LABEL,
@@ -11,7 +25,8 @@ import {
   type GraphLink,
   type GraphNode,
 } from "@/lib/graph";
-import { displayTitle, escapeHtml, formatDate, formatTimestamp, percent } from "@/lib/format";
+import { displayTitle, formatDate, formatTimestamp, percent } from "@/lib/format";
+import { computeProvenanceLayout } from "@/lib/layout";
 import { ConfidenceBar, Drawer, Field, StringList } from "./panel-ui";
 import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
 
@@ -52,12 +67,68 @@ function Endpoint({ id, node, role }: { id: string | null; node: GraphNode | und
 
 const EDGE_COLOR = "#f2da51";
 const SELECTED_EDGE_COLOR = "#ffffff";
+/** Padding (px) left around the lineage when fitting it to the viewport. */
+const FIT_PADDING = 130;
+/** Small graphs would otherwise be fitted to a comically large zoom. */
+const MAX_INITIAL_ZOOM = 2.6;
+const CARD_WIDTH = 194;
+const CARD_HEIGHT = 80;
+const CARD_RADIUS = 10;
+
+function roundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+  context.closePath();
+}
+
+function fitText(context: CanvasRenderingContext2D, value: string, maxWidth: number): string {
+  if (context.measureText(value).width <= maxWidth) return value;
+  let text = value;
+  while (text.length > 1 && context.measureText(`${text}…`).width > maxWidth) text = text.slice(0, -1);
+  return `${text.trimEnd()}…`;
+}
+
+function titleLines(context: CanvasRenderingContext2D, value: string, maxWidth: number): string[] {
+  const words = value.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index]!;
+    const candidate = current ? `${current} ${word}` : word;
+    if (context.measureText(candidate).width <= maxWidth || !current) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = lines.length === 1 ? words.slice(index).join(" ") : word;
+      if (lines.length === 1) break;
+    }
+  }
+  if (current && lines.length < 2) lines.push(current);
+  return lines.slice(0, 2).map((line) => fitText(context, line, maxWidth));
+}
 
 export default function GraphVisualizer({ data }: { data: GraphData }) {
   const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   // Exactly one of these is ever set; the panel renders whichever it is.
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   // The rejected-evidence drawer shares the right edge, so it is exclusive with the inspectors.
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
@@ -65,10 +136,84 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
   const nodesById = useMemo(() => new Map(data.nodes.map((node) => [node.id, node])), [data.nodes]);
 
+  const focusId = hoveredNode?.id ?? selectedNode?.id ?? null;
+
+  /** Every ancestor and descendant of the focused source, used to isolate its complete lineage. */
+  const focusedNodeIds = useMemo(() => {
+    if (!focusId) return null;
+    const parents = new Map<string, Set<string>>(data.nodes.map((node) => [node.id, new Set()]));
+    const children = new Map<string, Set<string>>(data.nodes.map((node) => [node.id, new Set()]));
+    for (const link of data.links) {
+      const parent = endpointId(link.source) ?? link.parent_id;
+      const child = endpointId(link.target) ?? link.child_id;
+      if (!parent || !child) continue;
+      parents.get(child)?.add(parent);
+      children.get(parent)?.add(child);
+    }
+
+    const lineage = new Set([focusId]);
+    const walk = (relationships: Map<string, Set<string>>) => {
+      const queue = [focusId];
+      for (let index = 0; index < queue.length; index += 1) {
+        for (const next of relationships.get(queue[index]!) ?? []) {
+          if (lineage.has(next)) continue;
+          lineage.add(next);
+          queue.push(next);
+        }
+      }
+    };
+    walk(parents);
+    walk(children);
+    return lineage;
+  }, [data.links, data.nodes, focusId]);
+
+  /**
+   * Pin every node to its deterministic layer position before the simulation runs. Fresh copies
+   * rather than in-place edits: the props stay untouched, and re-copying the links keeps their
+   * endpoints as ids so force-graph re-resolves them against this render's node objects.
+   */
+  const positioned = useMemo<{ nodes: GraphNode[]; links: GraphLink[] }>(() => {
+    const positions = computeProvenanceLayout(data.nodes, data.links);
+    const nodes = data.nodes.map((node) => {
+      const point = positions.get(node.id);
+      return point ? { ...node, fx: point.x, fy: point.y, x: point.x, y: point.y } : { ...node };
+    });
+    const links = data.links.map((link) => ({
+      ...link,
+      source: endpointId(link.source) ?? link.parent_id,
+      target: endpointId(link.target) ?? link.child_id,
+    }));
+    return { nodes, links };
+  }, [data]);
+
+  const fitToView = useCallback(() => {
+    const graph = fgRef.current;
+    if (!graph) return;
+    graph.zoomToFit(400, FIT_PADDING);
+    // zoomToFit happily magnifies a three-node lineage; keep it legible instead.
+    window.setTimeout(() => {
+      const current = fgRef.current;
+      if (current && current.zoom() > MAX_INITIAL_ZOOM) current.zoom(MAX_INITIAL_ZOOM, 200);
+    }, 450);
+  }, []);
+
+  const zoomBy = useCallback((factor: number) => {
+    const graph = fgRef.current;
+    if (!graph) return;
+    graph.zoom(Math.max(0.35, Math.min(5, graph.zoom() * factor)), 280);
+  }, []);
+
+  // Positions are fixed, so one fit after layout is enough; re-fit when a new tree arrives.
+  useEffect(() => {
+    const timer = window.setTimeout(fitToView, 100);
+    return () => window.clearTimeout(timer);
+  }, [positioned, fitToView]);
+
   const handleNodeClick = useCallback((node: GraphNode) => {
     if (fgRef.current && node.x !== undefined && node.y !== undefined) {
-      fgRef.current.centerAt(node.x, node.y, 1000);
-      fgRef.current.zoom(8, 2000);
+      const graph = fgRef.current;
+      graph.centerAt(node.x + 90, node.y, 650);
+      graph.zoom(Math.max(graph.zoom(), 1.25), 650);
     }
     setEvidencePanelOpen(false);
     setSelectedLink(null);
@@ -101,49 +246,196 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
   const panelOpen = Boolean(selectedNode || selectedLink);
 
+  const isFocusedLink = useCallback(
+    (link: GraphLink) => {
+      if (!focusedNodeIds) return false;
+      const source = endpointId(link.source) ?? link.parent_id;
+      const target = endpointId(link.target) ?? link.child_id;
+      return Boolean(source && target && focusedNodeIds.has(source) && focusedNodeIds.has(target));
+    },
+    [focusedNodeIds]
+  );
+
+  const paintNode = useCallback(
+    (node: GraphNode, context: CanvasRenderingContext2D) => {
+      if (node.x === undefined || node.y === undefined) return;
+      const x = node.x - CARD_WIDTH / 2;
+      const y = node.y - CARD_HEIGHT / 2;
+      const roleColor = ROLE_COLOR[node.role];
+      const selected = selectedNode?.id === node.id;
+      const hovered = hoveredNode?.id === node.id;
+      const related = !focusedNodeIds || focusedNodeIds.has(node.id);
+
+      context.save();
+      context.globalAlpha = related ? 1 : 0.17;
+
+      if (selected || hovered || node.is_root || node.is_seed) {
+        context.shadowColor = selected || hovered ? roleColor : `${roleColor}88`;
+        context.shadowBlur = selected || hovered ? 20 : 11;
+      }
+
+      const fill = context.createLinearGradient(x, y, x + CARD_WIDTH, y + CARD_HEIGHT);
+      fill.addColorStop(0, selected || hovered ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)");
+      fill.addColorStop(1, selected || hovered ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)");
+      roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+      context.fillStyle = fill;
+      context.fill();
+      context.shadowBlur = 0;
+      context.lineWidth = selected || hovered ? 1.5 : 0.75;
+      context.strokeStyle = selected || hovered ? roleColor : "rgba(230, 215, 242, 0.2)";
+      context.stroke();
+
+      context.save();
+      roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+      context.clip();
+      context.fillStyle = roleColor;
+      context.fillRect(x, y, selected || hovered ? 3 : 2, CARD_HEIGHT);
+      const sheen = context.createLinearGradient(x, y, x + CARD_WIDTH, y);
+      sheen.addColorStop(0, `${roleColor}1e`);
+      sheen.addColorStop(0.52, "rgba(255,255,255,0.018)");
+      sheen.addColorStop(1, "rgba(255,255,255,0)");
+      context.fillStyle = sheen;
+      context.fillRect(x, y, CARD_WIDTH, CARD_HEIGHT);
+      context.restore();
+
+      context.textBaseline = "middle";
+      context.font = "500 6.5px ui-monospace, SFMono-Regular, Menlo, monospace";
+      context.fillStyle = roleColor;
+      const publisher = (node.publisher || "unknown source").toUpperCase();
+      context.fillText(fitText(context, publisher, 118), x + 13, y + 14);
+
+      context.textAlign = "right";
+      context.fillStyle = "rgba(227, 215, 237, 0.48)";
+      context.fillText(formatDate(node.timestamp).toUpperCase(), x + CARD_WIDTH - 12, y + 14);
+
+      context.textAlign = "left";
+      context.font = "500 9.5px Geist, ui-sans-serif, system-ui, sans-serif";
+      context.fillStyle = "rgba(251, 248, 253, 0.94)";
+      const lines = titleLines(context, displayTitle(node), CARD_WIDTH - 26);
+      lines.forEach((line, index) => context.fillText(line, x + 13, y + 35 + index * 12));
+
+      context.font = "500 6.2px ui-monospace, SFMono-Regular, Menlo, monospace";
+      context.fillStyle = "rgba(221, 207, 232, 0.42)";
+      context.fillText(ROLE_LABEL[node.role].toUpperCase(), x + 13, y + CARD_HEIGHT - 10);
+
+      context.beginPath();
+      context.arc(x + CARD_WIDTH - 14, y + CARD_HEIGHT - 10, selected || hovered ? 3.2 : 2.4, 0, Math.PI * 2);
+      context.fillStyle = roleColor;
+      context.fill();
+      context.restore();
+    },
+    [focusedNodeIds, hoveredNode?.id, selectedNode?.id]
+  );
+
+  const paintNodePointerArea = useCallback(
+    (node: GraphNode, color: string, context: CanvasRenderingContext2D) => {
+      if (node.x === undefined || node.y === undefined) return;
+      roundedRect(
+        context,
+        node.x - CARD_WIDTH / 2,
+        node.y - CARD_HEIGHT / 2,
+        CARD_WIDTH,
+        CARD_HEIGHT,
+        CARD_RADIUS
+      );
+      context.fillStyle = color;
+      context.fill();
+    },
+    []
+  );
+
   return (
     <div className="relative w-full h-full">
       <ForceGraph<GraphNode, GraphLink>
         ref={fgRef}
-        graphData={data}
-        nodeLabel={(node) => `${escapeHtml(displayTitle(node))}<br/><i>${escapeHtml(node.publisher)}</i>`}
-        nodeColor={(node) => ROLE_COLOR[node.role]}
-        // Roots read as larger even when amber marks a timestamp conflict.
-        nodeVal={(node) => (node.is_root || node.is_seed ? 4 : 1.5)}
-        nodeRelSize={1.5}
-        // Hover-only label, so edges stay legible without permanent text.
-        linkLabel={(link) => `${percent(link.confidence)} &bull; ${escapeHtml(link.type)}`}
-        linkColor={(link) =>
-          link === selectedLink ? SELECTED_EDGE_COLOR : `rgba(242, 218, 81, ${0.25 + 0.55 * link.confidence})`
-        }
+        graphData={positioned}
+        // Coordinates are pinned, so no relaxation is needed or wanted.
+        cooldownTicks={0}
+        onEngineStop={fitToView}
+        // Dragging a node would silently break the temporal reading of the layout.
+        enableNodeDrag={false}
+        nodeLabel={() => ""}
+        nodeCanvasObject={paintNode}
+        nodeCanvasObjectMode={() => "replace"}
+        nodePointerAreaPaint={paintNodePointerArea}
+        onNodeHover={(node) => setHoveredNode(node ?? null)}
+        linkLabel={(link) => `${percent(link.confidence)} · ${link.type}`}
+        linkColor={(link) => {
+          if (link === selectedLink) return SELECTED_EDGE_COLOR;
+          if (focusedNodeIds && !isFocusedLink(link)) return "rgba(155, 125, 179, 0.07)";
+          if (isFocusedLink(link)) return `rgba(247, 202, 111, ${0.52 + 0.42 * link.confidence})`;
+          return `rgba(223, 171, 84, ${0.24 + 0.38 * link.confidence})`;
+        }}
         linkWidth={(link) => {
-          const base = 0.75 + 2 * link.confidence;
-          if (link === selectedLink) return base + 3;
-          if (link === hoveredLink) return base + 1.5;
+          const base = 0.8 + 1.35 * link.confidence;
+          if (link === selectedLink) return base + 2.2;
+          if (link === hoveredLink || isFocusedLink(link)) return base + 0.9;
           return base;
         }}
+        linkCurvature={0.045}
         // Widen the pick radius so thin, low-confidence edges are still clickable.
         linkHoverPrecision={6}
         onNodeClick={handleNodeClick}
         onLinkClick={handleLinkClick}
         onLinkHover={(link) => setHoveredLink(link ?? null)}
         onBackgroundClick={handleBackgroundClick}
-        backgroundColor="#000000"
+        backgroundColor="rgba(0,0,0,0)"
         // Arrow sits at the child end: parent (source) -> child (target).
-        linkDirectionalArrowLength={3}
-        linkDirectionalArrowRelPos={1}
+        linkDirectionalArrowLength={5.5}
+        linkDirectionalArrowRelPos={0.92}
+        linkDirectionalArrowColor={(link) =>
+          link === selectedLink || isFocusedLink(link) ? "rgba(255, 221, 145, 0.95)" : "rgba(223, 171, 84, 0.58)"
+        }
+        linkDirectionalParticles={(link) => (link === selectedLink || link === hoveredLink ? 2 : 0)}
+        linkDirectionalParticleColor={() => "#ffe4a3"}
+        linkDirectionalParticleSpeed={0.004}
+        linkDirectionalParticleWidth={2.4}
       />
+
+      <div className="absolute top-[5.65rem] left-6 z-20 flex items-center gap-2 rounded-xl border border-white/8 bg-[#0c0914]/65 px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-white/35 backdrop-blur-xl pointer-events-none">
+        <span className="text-[#e6bd6a]">Origins</span>
+        <MoveRight size={13} strokeWidth={1.5} />
+        <span>Propagation</span>
+      </div>
+
+      <div className="absolute top-[5.65rem] right-6 z-30 flex items-center gap-1 rounded-xl border border-white/8 bg-[#0c0914]/72 p-1.5 text-white/60 shadow-2xl backdrop-blur-xl">
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() => zoomBy(1.35)}
+          className="rounded-lg p-2 transition-colors hover:bg-white/10 hover:text-[#f0ca79]"
+        >
+          <ZoomIn size={16} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() => zoomBy(0.74)}
+          className="rounded-lg p-2 transition-colors hover:bg-white/10 hover:text-[#f0ca79]"
+        >
+          <ZoomOut size={16} strokeWidth={1.5} />
+        </button>
+        <span className="mx-0.5 h-5 w-px bg-white/10" />
+        <button
+          type="button"
+          aria-label="Fit graph to view"
+          onClick={fitToView}
+          className="rounded-lg p-2 transition-colors hover:bg-white/10 hover:text-[#f0ca79]"
+        >
+          <Maximize2 size={15} strokeWidth={1.5} />
+        </button>
+      </div>
 
       {/* Opens the rejected-evidence drawer; sits under it so the two never fight. */}
       <button
         onClick={openEvidencePanel}
-        className="absolute bottom-6 right-6 z-40 text-left bg-black/60 hover:bg-white/10 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2.5 transition-colors"
+        className="absolute bottom-6 right-6 z-40 rounded-xl border border-white/10 bg-[#0c0914]/78 px-4 py-2.5 text-left shadow-2xl backdrop-blur-xl transition-colors hover:border-[#e6bd6a]/25 hover:bg-[#1a1024]/90"
       >
-        <span className="flex items-center text-sm text-gray-200">
-          <FilterX size={15} className="mr-2 text-gray-400" />
+        <span className="flex items-center text-sm text-white/75">
+          <FilterX size={15} className="mr-2 text-[#d5ad61]" />
           Rejected Evidence
         </span>
-        <span className="block text-xs text-gray-500 mt-0.5">
+        <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wider text-white/30">
           {data.rejectedEdges.length} rejected &middot; {data.excludedCandidates.length} excluded
         </span>
       </button>
