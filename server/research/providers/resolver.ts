@@ -1,4 +1,4 @@
-import type { FetchedPage, PageFetcher, SearchProvider, SourceReference, SourceResolver } from "./types";
+import type { FetchFailure, FetchFailureCategory, FetchResult, FetchedPage, PageFetcher, SearchProvider, SourceReference, SourceResolver } from "./types";
 
 function usableHttpUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -59,11 +59,33 @@ export interface FetchedSource {
   resolved: boolean;
 }
 
-async function nonfatalFetch(fetcher: PageFetcher, url: string): Promise<FetchedPage | null> {
+export interface SourceFetchFailure {
+  stage: "fetch" | "resolution";
+  category: FetchFailureCategory | "missing-source-reference" | "resolver-failed";
+  message: string;
+  recoverable: boolean;
+  url: string | null;
+}
+
+export interface FetchSourceResult {
+  fetched: FetchedSource | null;
+  failure: SourceFetchFailure | null;
+}
+
+async function nonfatalFetch(fetcher: PageFetcher, url: string): Promise<FetchResult> {
   try {
-    return await fetcher.fetch(url);
+    if (fetcher.fetchDetailed) return await fetcher.fetchDetailed(url);
+    const page = await fetcher.fetch(url);
+    if (page) return { ok: true, page };
+    return {
+      ok: false,
+      failure: { stage: "fetch", category: "http-404", message: "source was not found", recoverable: false, status: 404, url },
+    };
   } catch {
-    return null;
+    return {
+      ok: false,
+      failure: { stage: "fetch", category: "network-error", message: "source network request failed", recoverable: true, status: null, url },
+    };
   }
 }
 
@@ -72,20 +94,69 @@ async function nonfatalFetch(fetcher: PageFetcher, url: string): Promise<Fetched
  * it never runs after a usable direct response and it never recursively searches resolver output.
  */
 export async function fetchSource(source: SourceReference, options: FetchSourceOptions): Promise<FetchedSource | null> {
+  return (await fetchSourceDetailed(source, options)).fetched;
+}
+
+export async function fetchSourceDetailed(source: SourceReference, options: FetchSourceOptions): Promise<FetchSourceResult> {
   const directUrl = usableHttpUrl(source.url);
+  let directFailure: FetchFailure | null = null;
   if (directUrl) {
-    const page = await nonfatalFetch(options.fetcher, directUrl);
-    if (page) return { page, resolved: false };
+    const result = await nonfatalFetch(options.fetcher, directUrl);
+    if (result.ok) return { fetched: { page: result.page, resolved: false }, failure: null };
+    directFailure = result.failure;
+  } else if (source.url) {
+    directFailure = {
+      stage: "fetch",
+      category: "invalid-url",
+      message: "source URL is not HTTP(S)",
+      recoverable: false,
+      status: null,
+      url: source.url,
+    };
   }
 
-  if (!options.resolver) return null;
+  if (!options.resolver) {
+    if (directFailure) return { fetched: null, failure: directFailure };
+    return {
+      fetched: null,
+      failure: {
+        stage: "resolution",
+        category: "missing-source-reference",
+        message: "source proposal did not contain a usable URL or bibliographic reference",
+        recoverable: false,
+        url: null,
+      },
+    };
+  }
   let resolvedUrl: string | null;
   try {
     resolvedUrl = usableHttpUrl(await options.resolver.resolve(source));
   } catch {
-    return null;
+    return {
+      fetched: null,
+      failure: {
+        stage: "resolution",
+        category: "resolver-failed",
+        message: "source resolution failed",
+        recoverable: true,
+        url: directUrl,
+      },
+    };
   }
-  if (!resolvedUrl || resolvedUrl === directUrl) return null;
-  const page = await nonfatalFetch(options.fetcher, resolvedUrl);
-  return page ? { page, resolved: true } : null;
+  if (!resolvedUrl || resolvedUrl === directUrl) {
+    if (directFailure) return { fetched: null, failure: directFailure };
+    return {
+      fetched: null,
+      failure: {
+        stage: "resolution",
+        category: "missing-source-reference",
+        message: "source resolution did not produce a usable URL",
+        recoverable: false,
+        url: null,
+      },
+    };
+  }
+  const result = await nonfatalFetch(options.fetcher, resolvedUrl);
+  if (result.ok) return { fetched: { page: result.page, resolved: true }, failure: null };
+  return { fetched: null, failure: result.failure };
 }

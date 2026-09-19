@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalUrl, extractDocument, type CandidateDocument } from "./extract";
-import type { PageFetcher } from "./providers";
+import { toAuditMetadata, type PageFetcher } from "./providers";
 import { traverseProvenance, type ProposedUpstreamSource, type UpstreamSourceProposer } from "./traversal";
 
 const FABRICATED = ["United States v. Figueroa-Florez", "United States v. Ortiz", "United States v. Amato"];
@@ -226,6 +226,78 @@ describe("recursive provenance traversal", () => {
     expect(result.terminations).toEqual([expect.objectContaining({ url: a.url, reason: "all-proposals-rejected" })]);
   });
 
+  it("preserves earlier validated lineage as partial when a later hop cannot be acquired", async () => {
+    const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A", links: ["https://sources.test/b"] };
+    const b = { url: "https://sources.test/b", date: "2023-01-02", marker: "B" };
+    const missing = "https://sources.test/missing";
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([a, b], []),
+        proposer: proposer(new Map([[a.url, [proposed(b.url)]], [b.url, [proposed(missing)]]]), []),
+      },
+    );
+
+    expect(result.status).toBe("partial");
+    expect(acceptedUrls(result)).toEqual([`${b.url}>${a.url}`]);
+    expect(result.rejected_edges).toContainEqual(
+      expect.objectContaining({ parent_url: missing, termination: "fetch-failure", category: "http-404" }),
+    );
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ stage: "fetch", source: missing, category: "http-404", recoverable: false }),
+    );
+  });
+
+  it("keeps an empty proposed document out of accepted lineage", async () => {
+    const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A" };
+    const empty = "https://sources.test/empty";
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: {
+          async fetch(url) {
+            return url === empty ? { url, kind: "html", html: "<html><body></body></html>" } : null;
+          },
+        },
+        proposer: proposer(new Map([[a.url, [proposed(empty)]]]), []),
+      },
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.accepted_edges).toEqual([]);
+    expect(result.rejected_edges).toContainEqual(
+      expect.objectContaining({ parent_url: empty, termination: "fetch-failure", category: "empty-document" }),
+    );
+  });
+
+  it("preserves cached bibliography provenance through traversal diagnostics", async () => {
+    const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A", links: ["https://sources.test/b"] };
+    const b = { url: "https://sources.test/b", date: "2023-01-02", marker: "B" };
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([a, b], []),
+        proposer: {
+          async analyze(document) {
+            if (document.url === a.url) {
+              return {
+                status: "completed" as const,
+                proposals: [proposed(b.url)],
+                fallback: { provenance: "cached_demo_fallback" as const, capturedAt: "2026-09-19T00:00:00.000Z" },
+              };
+            }
+            return [];
+          },
+        },
+      },
+    );
+
+    expect(result.status).toBe("complete");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ stage: "gptzero", category: "cached_demo_fallback", source: a.url }),
+    );
+  });
+
   it("pauses an asynchronous analysis job and resumes it with the durable job ID", async () => {
     const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A", links: ["https://sources.test/b"] };
     const b = { url: "https://sources.test/b", date: "2023-01-02", marker: "B" };
@@ -318,5 +390,44 @@ describe("recursive provenance traversal", () => {
     expect(fetchCalls.filter((url) => url === d.url)).toHaveLength(1);
     expect(result.accepted_edges.filter((edge) => edge.parent_id === result.documents.find((document) => document.url === d.url)?.id)).toHaveLength(2);
     expect(result.accepted_edges.filter((edge) => edge.recursed)).toHaveLength(3);
+  });
+});
+
+describe("proposal metadata isolation", () => {
+  it("produces byte-identical acceptance and confidence regardless of a proposal's audit metadata contents", async () => {
+    const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A", links: ["https://sources.test/b"] };
+    const b = { url: "https://sources.test/b", date: "2023-01-02", marker: "B" };
+
+    const run = async (metadataPayload: Record<string, unknown>) =>
+      traverseProvenance(
+        { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+        {
+          fetcher: fetcher([a, b], []),
+          proposer: proposer(
+            new Map([[a.url, [{ url: b.url, metadata: toAuditMetadata(metadataPayload) } satisfies ProposedUpstreamSource]]]),
+            [],
+          ),
+        },
+      );
+
+    const low = await run({
+      score: 0,
+      hallucination_label: "supported",
+      stance: "supports",
+      match_confidence: 0,
+      document_ai_probability: 0,
+    });
+    const high = await run({
+      score: 1,
+      hallucination_label: "hallucinated",
+      stance: "contradicts",
+      match_confidence: 1,
+      document_ai_probability: 1,
+    });
+
+    expect(high.accepted_edges).toEqual(low.accepted_edges);
+    expect(high.rejected_edges).toEqual(low.rejected_edges);
+    expect(high.terminations).toEqual(low.terminations);
+    expect(high.stats).toEqual(low.stats);
   });
 });

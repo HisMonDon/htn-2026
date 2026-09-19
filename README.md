@@ -56,7 +56,27 @@ discover (direct source fetch -> optional resolution -> links) -> extract -> ind
   - Links from the child prove order. Shared fabricated citations place a page in the lineage.
   - Copied phrasing outside quotations picks between parents. Similarity alone stays at 0.25 or below.
   - Same-day pages without a link get no direction.
-- **Output** (`shared/tree.ts`): nodes, accepted edges with basis, mutations, timing, link evidence and alternatives, plus rejected edges, excluded candidates and stats.
+- **Output** (`shared/tree.ts`): a validated tree/DAG with all explicit accepted parents, roots derived from accepted ancestry, and accepted edges carrying basis, timing, link evidence, alternatives, and human-readable added/omitted/reframed claim mutations. Rejected edges, excluded candidates, and run stats remain available for audit.
+
+### Independent edge validation
+
+A proposer (today GPTZero, through `server/gptzero/proposal.ts`) can point at a pair of documents
+and say "this claim may have come from there". `server/provenance/validator.ts` decides on its own
+whether that pair is a provenance edge, and returns a `ProvenanceEdgeValidation`
+(`shared/provenance-validation.ts`) with a relationship type, a confidence, every signal marked
+passed/failed/not-applicable, the reasons, and evidence the graph can render directly — including a
+ready-made `TreeEdge` when the edge is accepted.
+
+The scoring core takes two documents, their candidate pool and known fabrications, and nothing
+else: there is no parameter through which a proposer's probability could reach it. Three signals
+are preconditions that can only rule an edge out — `distinct_artifact` (not the same text twice),
+`chronology` (the child can have been written after the parent) and `canonical_metadata` (the
+named URL really resolves to this artifact). Four can corroborate one: `explicit_link`,
+`citation_reference`, `shared_fabrications` (invented citations, the same misspelling of one, other
+hallucinated entities, discounted by how many candidates carry them) and, weakly,
+`shared_phrasing` and `passage_overlap`. Without a link, a named reference or a shared fabrication,
+confidence is capped at 0.25; undated pairs at 0.3 and same-day pairs at 0.6, which report
+`shared-source` rather than pick a direction.
 
 ### Action loop
 
@@ -96,7 +116,7 @@ Then set `CONTROLLED_TARGET_URL` to the tunnel URL and `BROWSERBASE_API_KEY` in 
 - `server/target/`: controlled target (the only place submissions go)
 - `server/agent/`: orchestrator, safety gate, Browserbase/Stagehand operator, offline test operator
 - `server/gptzero/`: AI-writing detector interface, real and mock clients
-- `server/provenance/`: deterministic parent scoring
+- `server/provenance/`: deterministic parent scoring and the independent edge validator
 - `server/research/`: discovery, evidence extraction, candidate index (Elastic/BM25), edge scoring, tree assembly
 - `server/api/`, `server/service.ts`: HTTP API and case state
 - `client/`: API client and minimal UI wiring in step 4

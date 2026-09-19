@@ -21,8 +21,55 @@ export interface SearchProvider {
  */
 export type FetchedPage = { url: string; kind: "html"; html: string } | { url: string; kind: "pdf"; bytes: Uint8Array };
 
+export type FetchFailureCategory =
+  | "invalid-url"
+  | "timeout"
+  | "http-401"
+  | "http-403"
+  | "http-404"
+  | "http-429"
+  | "http-5xx"
+  | "http-error"
+  | "redirect-error"
+  | "network-error"
+  | "response-read-failed"
+  | "unsupported-content";
+
+export interface FetchFailure {
+  stage: "fetch";
+  category: FetchFailureCategory;
+  message: string;
+  recoverable: boolean;
+  status: number | null;
+  url: string;
+}
+
+export type FetchResult = { ok: true; page: FetchedPage } | { ok: false; failure: FetchFailure };
+
 export interface PageFetcher {
   fetch(url: string): Promise<FetchedPage | null>;
+  fetchDetailed?(url: string): Promise<FetchResult>;
+}
+
+declare const AUDIT_METADATA: unique symbol;
+
+/**
+ * Provider-supplied audit context (e.g. the matched claim/citation record, a relevant passage),
+ * structurally opaque outside this module. There is no member access into it: `toAuditMetadata`
+ * and `readAuditMetadata` are the only way in or out, so a `.metadata.someField` read in scoring
+ * or acceptance code (`research/edges.ts`, `research/traversal.ts`, `provenance/validator.ts`) is
+ * a compile error, not just a convention documented in a comment.
+ */
+export type AuditMetadata = { readonly [AUDIT_METADATA]: true };
+
+/** Wrap provider-supplied audit context. Only call this where a proposal is constructed. */
+export function toAuditMetadata(value: Record<string, unknown>): AuditMetadata {
+  return value as unknown as AuditMetadata;
+}
+
+/** Escape hatch for debugging/audit display only. Never call this from scoring or acceptance code. */
+export function readAuditMetadata(value: AuditMetadata): Record<string, unknown> {
+  return value as unknown as Record<string, unknown>;
 }
 
 /**
@@ -34,6 +81,8 @@ export interface SourceReference {
   title?: string | null;
   citation?: string | null;
   author?: string | null;
+  /** Purely informational: traversal and edge scoring cannot read through this type. */
+  metadata?: AuditMetadata | null;
 }
 
 /**

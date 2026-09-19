@@ -623,6 +623,26 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                 <StringList items={selectedLink.shared_mutations} empty="No shared distinctive mutations" />
               </Field>
 
+              <Field label="Claim changes">
+                {selectedLink.claim_mutations.length === 0 ? (
+                  <span className="text-gray-500">No material wording change detected in the claim passage</span>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedLink.claim_mutations.map((mutation, index) => (
+                      <div
+                        key={`${mutation.type}-${index}`}
+                        className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                      >
+                        <p className="mb-1 text-[10px] uppercase tracking-wide text-yellow-300/75">
+                          {mutation.type}
+                        </p>
+                        <p className="text-sm leading-relaxed text-gray-200">{mutation.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Field>
+
               <Field label="Rare copied phrasing">
                 Rare shared phrases: <span className="text-white">{selectedLink.rare_shared_phrases}</span>
               </Field>
