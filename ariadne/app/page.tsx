@@ -33,30 +33,33 @@ export default function LandingPage() {
   };
 
   return (
-    <main className="relative w-full h-screen overflow-hidden bg-black text-white font-sans">
-      
+    <main className="relative w-full h-screen overflow-hidden bg-black text-white font-sans lowercase">
+
       {/* Layer 1: The memoized interactive galaxy background */}
       {galaxyBackground}
 
-      {/* Layer 2: UI Elements */}
-      <div className="relative z-10 flex flex-col items-center justify-center w-full h-full px-4 pointer-events-none">
-        
+      {/* Layer 2: UI Elements, anchored toward the bottom of the viewport */}
+      <div className="relative z-10 flex flex-col items-center justify-end w-full h-full px-4 pb-[15vh] pointer-events-none">
+
         {/* Title Elements */}
-        <div className="flex flex-col items-center mb-10 space-y-4">
-          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-center bg-clip-text text-transparent bg-gradient-to-b from-white via-white to-gray-500 drop-shadow-2xl">
-            Ariadne
+        <div className="flex flex-col items-center mb-8">
+          <h1 className="text-6xl md:text-8xl font-thin tracking-tight text-center text-white [text-shadow:0_0_35px_rgba(255,255,255,0.5)]">
+            ariadne.
           </h1>
-          
-          <p className="text-lg md:text-xl text-gray-400 text-center max-w-lg mt-4">
-            Insert Description
+
+          <p
+            className="italic text-lg md:text-xl text-white/80 text-center max-w-md mt-4 [text-shadow:0_0_20px_rgba(255,255,255,0.3)]"
+            style={{ fontFamily: "var(--font-neuton)" }}
+          >
+            trace every thread of research to its origin.
           </p>
         </div>
 
         {/* Chat Input Component */}
-        <SearchBox 
-          value={message} 
-          onChange={(e) => setMessage(e.target.value)} 
-          onSubmit={handleSend} 
+        <SearchBox
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onSubmit={handleSend}
         />
 
       </div>
