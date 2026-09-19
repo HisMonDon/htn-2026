@@ -2,7 +2,10 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { detectContentKind, looksLikePdfBytes } from "./content-type";
 import { discover } from "./discovery";
-import { extractPdfPages, MAX_PDF_BYTES, parsePdfDocument } from "./pdf";
+import { contentFingerprint } from "./fingerprint";
+import { extractPdfPages, MAX_PDF_BYTES, parsePdfDocument, pdfFingerprintText } from "./pdf";
+import { MemoryIndex } from "./candidate-index";
+import { runResearch } from "./pipeline";
 import type { PageFetcher, SearchProvider } from "./providers";
 
 const FAB = ["United States v. Figueroa-Florez", "United States v. Ortiz", "United States v. Amato"];
@@ -101,7 +104,7 @@ describe("deterministic PDF extraction", () => {
 });
 
 describe("PDF document assembly", () => {
-  it("does not fabricate title, publisher or timestamp from PDF metadata", async () => {
+  it("does not treat generic PDF creation metadata as a publication timestamp", async () => {
     const bytes = await makePdf(["IN THE UNITED STATES DISTRICT COURT", "Motion for early termination."]);
     const extraction = await extractPdfPages(bytes);
     expect(extraction.ok).toBe(true);
@@ -111,6 +114,91 @@ describe("PDF document assembly", () => {
     expect(parsed.publisher).toBe("court.example");
     expect(parsed.timestamp).toBeNull();
     expect(parsed.timestamp_source).toBe("none");
+    expect(parsed.timestamp_confidence).toBe("none");
+  });
+
+  it("extracts an unambiguous date from a court filing header", async () => {
+    const extraction = await extractPdfPages(
+      await makePdf(["Case 1:23-cv-00001 Document 88 Filed 11/29/23 Page 1 of 5\nA court filing with enough text to be parsed deterministically." ]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/docket/88", extraction);
+    expect(parsed).toMatchObject({
+      timestamp: "2023-11-29T00:00:00.000Z",
+      timestamp_source: "court-filing-header",
+      timestamp_confidence: "strong",
+      timestamp_conflict: null,
+    });
+  });
+
+  it("keeps a repeated docket header as one stable timestamp", async () => {
+    const header = "Document 88 Filed 11/29/23 Page 1 of 5";
+    const extraction = await extractPdfPages(
+      await makePdf([`${header}\nOpening filing text with enough deterministic content.`, `${header}\nSecond page text with enough deterministic content.`]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/docket/88", extraction);
+    expect(parsed.timestamp).toBe("2023-11-29T00:00:00.000Z");
+    expect(parsed.timestamp_conflict).toBeNull();
+  });
+
+  it("records conflicting strong filing dates instead of choosing one", async () => {
+    const extraction = await extractPdfPages(
+      await makePdf([
+        "Document 88 Filed 11/29/23 Page 1 of 5\nFirst page filing text with enough content for extraction.",
+        "Document 88 Filed 12/14/23 Page 2 of 5\nSecond page filing text with enough content for extraction.",
+      ]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/docket/88", extraction);
+    expect(parsed.timestamp).toBeNull();
+    expect(parsed.timestamp_source).toBe("none");
+    expect(parsed.timestamp_conflict).toContain("court-filing-header (2023-11-29)");
+    expect(parsed.timestamp_conflict).toContain("court-filing-header (2023-12-14)");
+  });
+
+  it("does not guess an ambiguous numeric court date", async () => {
+    const extraction = await extractPdfPages(
+      await makePdf(["Document 88 Filed 04/05/23 Page 1 of 5\nText long enough that the PDF is otherwise a valid extraction candidate."]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/docket/88", extraction);
+    expect(parsed.timestamp).toBeNull();
+    expect(parsed.timestamp_source).toBe("none");
+  });
+
+  it("uses a clearly labelled filing date when no docket header is present", async () => {
+    const extraction = await extractPdfPages(
+      await makePdf(["Filing date: November 29, 2023\nText long enough to establish a labelled document-date fallback deterministically."]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/docket/88", extraction);
+    expect(parsed).toMatchObject({
+      timestamp: "2023-11-29T00:00:00.000Z",
+      timestamp_source: "document-publication-label",
+      timestamp_confidence: "moderate",
+    });
+  });
+
+  it("does not let a URL date override a court filing header", async () => {
+    const extraction = await extractPdfPages(
+      await makePdf(["Document 88 Filed 11/29/23 Page 1 of 5\nText long enough to prove that the filing header takes priority over the URL."]),
+    );
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const parsed = parsePdfDocument("https://court.example/2024/02/10/docket/88", extraction);
+    expect(parsed).toMatchObject({ timestamp: "2023-11-29T00:00:00.000Z", timestamp_source: "court-filing-header" });
   });
 });
 
@@ -163,5 +251,74 @@ describe("PDF ingestion reaches the same pipeline as HTML", () => {
     expect(result.documents.find((doc) => doc.url === pdfUrl)).toBeUndefined();
     expect(result.documents.find((doc) => doc.url === htmlUrl)).toBeDefined();
     expect(result.extractionFailures.some((failure) => failure.includes(pdfUrl))).toBe(true);
+  });
+});
+
+describe("PDF mirror detection", () => {
+  const mirrorA = "https://courtlistener.example/docket/95";
+  const mirrorB = "https://documentcloud.example/documents/95";
+  const citationPages = ["COURT FILING", ...FAB.map((citation) => `See ${citation}.`)];
+
+  function pdfProviders(pages: Map<string, Uint8Array>): { search: SearchProvider; fetcher: PageFetcher } {
+    const search: SearchProvider = {
+      kind: "offline-corpus",
+      async search() {
+        return [...pages.keys()].map((url) => ({ url, title: "Court filing", published: null }));
+      },
+    };
+    const fetcher: PageFetcher = {
+      async fetch(url: string) {
+        const bytes = pages.get(url);
+        return bytes ? { url, kind: "pdf", bytes } : null;
+      },
+    };
+    return { search, fetcher };
+  }
+
+  it("groups the same PDF bytes fetched from two URLs before retrieval and scoring", async () => {
+    const bytes = await makePdf(citationPages);
+    const extraction = await extractPdfPages(bytes);
+    expect(extraction.ok).toBe(true);
+    if (!extraction.ok) return;
+
+    const result = await discover({ claim: CLAIM }, pdfProviders(new Map([[mirrorA, bytes], [mirrorB, bytes]])));
+    expect(result.documents).toHaveLength(1);
+    expect(result.documents[0]).toMatchObject({
+      url: mirrorA,
+      mirror_urls: [mirrorB],
+      content_fingerprint: contentFingerprint(pdfFingerprintText(extraction)),
+    });
+
+    const tree = await runResearch({ claim: CLAIM }, { ...pdfProviders(new Map([[mirrorA, bytes], [mirrorB, bytes]])), index: new MemoryIndex() });
+    expect(tree.nodes).toHaveLength(1);
+    expect(tree.edges).toEqual([]);
+    expect(tree.root_ids).toEqual([tree.nodes[0]!.id]);
+  });
+
+  it("keeps similar but non-identical PDFs separate", async () => {
+    const original = await makePdf([...citationPages, "The requested relief is granted."]);
+    const revised = await makePdf([...citationPages, "The requested relief is denied."]);
+    const result = await discover({ claim: CLAIM }, pdfProviders(new Map([[mirrorA, original], [mirrorB, revised]])));
+
+    expect(result.documents).toHaveLength(2);
+    expect(new Set(result.documents.map((document) => document.content_fingerprint)).size).toBe(2);
+  });
+
+  it("keeps different PDFs with the same extracted title separate", async () => {
+    const first = await makePdf(["ORDER OF THE COURT", ...FAB, "First filing text."]);
+    const second = await makePdf(["ORDER OF THE COURT", ...FAB, "Second filing text."]);
+    const result = await discover({ claim: CLAIM }, pdfProviders(new Map([[mirrorA, first], [mirrorB, second]])));
+
+    expect(result.documents).toHaveLength(2);
+    expect(result.documents.map((document) => document.title)).toEqual(["ORDER OF THE COURT", "ORDER OF THE COURT"]);
+  });
+
+  it("keeps identical normalized PDF text with different page boundaries separate", async () => {
+    const fourPages = await makePdf(citationPages);
+    const twoPages = await makePdf(["COURT FILING", citationPages.slice(1).join("\n")]);
+    const result = await discover({ claim: CLAIM }, pdfProviders(new Map([[mirrorA, fourPages], [mirrorB, twoPages]])));
+
+    expect(result.documents).toHaveLength(2);
+    expect(new Set(result.documents.map((document) => document.content_fingerprint)).size).toBe(2);
   });
 });

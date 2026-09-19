@@ -497,7 +497,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                 <Clock size={14} className="mr-2 text-gray-500 shrink-0" />
                 <span>
                   {formatTimestamp(selectedNode.timestamp)}
-                  <span className="text-gray-500"> (via {selectedNode.timestamp_source})</span>
+                  <span className="text-gray-500">
+                    {" "}(via {selectedNode.timestamp_source}; {selectedNode.timestamp_confidence} confidence)
+                  </span>
                 </span>
               </div>
               {selectedNode.earliest_possible && selectedNode.earliest_possible !== selectedNode.timestamp && (

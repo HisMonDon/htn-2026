@@ -5,11 +5,16 @@ import type { CandidateDocument } from "./extract";
 function doc(id: string, passage: string, fabricated: string[] = []): CandidateDocument {
   return {
     id,
+    canonical_id: `sha256:${"0".repeat(64)}`,
+    content_fingerprint: "0".repeat(64),
     url: `https://${id}.example/`,
+    mirror_urls: [],
     publisher: id,
     title: id,
     timestamp: "2023-12-01T00:00:00.000Z",
     timestamp_source: "meta",
+    timestamp_confidence: "strong",
+    timestamp_conflict: null,
     text: passage,
     passage,
     outbound_links: [],

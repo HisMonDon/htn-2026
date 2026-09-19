@@ -20,7 +20,18 @@ function apiUrl(path: string): string {
  * The backend schema is the source of truth — keep these in sync with it, never the reverse.
  */
 
-export type TimestampSource = "meta" | "json-ld" | "time-element" | "url" | "search-result" | "none";
+export type TimestampSource =
+  | "meta"
+  | "json-ld"
+  | "time-element"
+  | "pdf-metadata"
+  | "court-filing-header"
+  | "document-publication-label"
+  | "url"
+  | "search-result"
+  | "none";
+
+export type TimestampConfidence = "strong" | "moderate" | "weak" | "none";
 
 export interface AiEvidence {
   provider: "gptzero";
@@ -32,12 +43,16 @@ export interface AiEvidence {
 
 export interface LineageTreeNode {
   id: string;
+  canonical_id: string;
+  content_fingerprint: string;
   url: string;
+  mirror_urls: string[];
   publisher: string;
   title: string;
   /** Publication time the document claims, if any. */
   timestamp: string | null;
   timestamp_source: TimestampSource;
+  timestamp_confidence: TimestampConfidence;
   /** Earliest time the document can have existed, given what it links to. */
   earliest_possible: string | null;
   timestamp_conflict: string | null;

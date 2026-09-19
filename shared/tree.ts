@@ -9,16 +9,36 @@ import { AiEvidence } from "./schema";
 const timestamp = z.iso.datetime({ offset: true });
 const confidence = z.number().min(0).max(1);
 
-export const TimestampSource = z.enum(["meta", "json-ld", "time-element", "url", "search-result", "none"]);
+/** Where a normalized document's claimed timestamp came from. */
+export const TimestampSource = z.enum([
+  "meta",
+  "json-ld",
+  "time-element",
+  "pdf-metadata",
+  "court-filing-header",
+  "document-publication-label",
+  "url",
+  "search-result",
+  "none",
+]);
+
+/** Confidence in the timestamp evidence; scoring retains its established thresholds. */
+export const TimestampConfidence = z.enum(["strong", "moderate", "weak", "none"]);
 
 export const TreeNode = z.object({
   id: z.string().min(1),
+  /** Stable SHA-256 identity of the artifact, independent of its hosting URL. */
+  canonical_id: z.string().min(1),
+  content_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   url: z.url(),
+  /** Other URLs that served the same exact extracted artifact. */
+  mirror_urls: z.array(z.url()),
   publisher: z.string().min(1),
   title: z.string(),
   /** Publication time the document claims, if any. */
   timestamp: timestamp.nullable(),
   timestamp_source: TimestampSource,
+  timestamp_confidence: TimestampConfidence,
   /**
    * Earliest time the document can have existed, given what it links to. Equals `timestamp`
    * unless the document links to something published later than its own claimed date.

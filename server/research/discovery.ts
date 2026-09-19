@@ -1,4 +1,5 @@
 import { assembleDocument, canonicalUrl, parseHtmlPage, type CandidateDocument, type ParsedDocument } from "./extract";
+import { canonicalizeDocuments } from "./canonicalize";
 import { extractPdfPages, parsePdfDocument } from "./pdf";
 import type { PageFetcher, SearchProvider } from "./providers";
 import { canonicalText, extractCaseNames, matchKey, tokens } from "./text";
@@ -90,6 +91,8 @@ export async function discover(
   const perQuery = options.resultsPerQuery ?? 8;
   const maxPhraseQueries = options.maxPhraseQueries ?? 3;
 
+  // URLs remain distinct through discovery so their origin and exact link evidence are retained.
+  // Exact-content grouping happens only after deterministic extraction and before retrieval.
   const documents = new Map<string, CandidateDocument>();
   const queries: string[] = [];
   const failedQueries: string[] = [];
@@ -102,7 +105,7 @@ export async function discover(
 
   async function visit(url: string, via: string, published: string | null): Promise<CandidateDocument | null> {
     const key = canonicalUrl(url);
-    const existing = [...documents.values()].find((doc) => doc.url === key);
+    const existing = documents.get(key);
     if (existing) {
       if (!existing.discovered_via.includes(via)) existing.discovered_via.push(via);
       return null;
@@ -120,7 +123,7 @@ export async function discover(
         extractionFailures.push(`${page.url}: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
         return null;
       }
-      parsed = parsePdfDocument(page.url, extraction);
+      parsed = parsePdfDocument(page.url, extraction, published ?? undefined);
     } else {
       parsed = parseHtmlPage(page.url, page.html, published ?? undefined);
     }
@@ -130,16 +133,16 @@ export async function discover(
       claimTerms: claimTerms(input.claim, fabricated),
       discoveredVia: via,
     });
-    documents.set(doc.id, doc);
-    pages.set(doc.id, { parsed, via });
+    documents.set(doc.url, doc);
+    pages.set(doc.url, { parsed, via });
     return doc;
   }
 
-  let seedId: string | null = null;
+  let seedUrl: string | null = null;
   if (input.seedUrl) {
     const seed = await visit(input.seedUrl, "seed", null);
     if (seed) {
-      seedId = seed.id;
+      seedUrl = seed.url;
       if (fabricated.length === 0) fabricated = seed.case_names;
     }
   }
@@ -198,18 +201,19 @@ export async function discover(
   // cached ParsedDocument means this never re-downloads or re-parses a PDF or HTML page.
   const finalTerms = claimTerms(input.claim, fabricated);
   const finalDocs = [...documents.values()].map((doc) => {
-    const page = pages.get(doc.id)!;
+    const page = pages.get(doc.url)!;
     const again = assembleDocument(page.parsed, { fabricated, claimTerms: finalTerms, discoveredVia: page.via });
     return { ...again, discovered_via: doc.discovered_via };
   });
 
+  const canonicalized = canonicalizeDocuments(finalDocs);
   return {
-    documents: finalDocs,
+    documents: canonicalized.documents,
     fabricated,
     queries,
     failedQueries,
     extractionFailures,
     fetched,
-    seedId,
+    seedId: seedUrl ? (canonicalized.idByUrl.get(seedUrl) ?? null) : null,
   };
 }

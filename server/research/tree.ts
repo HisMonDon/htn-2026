@@ -192,13 +192,17 @@ export async function buildTree(input: BuildInput): Promise<LineageTree> {
     const timing = timings.get(doc.id)!;
     return {
       id: doc.id,
+      canonical_id: doc.canonical_id,
+      content_fingerprint: doc.content_fingerprint,
       url: doc.url,
+      mirror_urls: doc.mirror_urls,
       publisher: doc.publisher,
       title: doc.title,
       timestamp: doc.timestamp,
       timestamp_source: doc.timestamp_source,
+      timestamp_confidence: doc.timestamp_confidence,
       earliest_possible: iso(timing.effective),
-      timestamp_conflict: timing.conflict,
+      timestamp_conflict: [doc.timestamp_conflict, timing.conflict].filter((conflict): conflict is string => conflict !== null).join("; ") || null,
       passage: doc.passage,
       outbound_links: doc.outbound_links,
       fabricated_citations: doc.fabricated_citations,

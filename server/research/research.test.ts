@@ -186,11 +186,16 @@ describe("edge scoring rules", () => {
   function doc(id: string, overrides: Partial<CandidateDocument>): CandidateDocument {
     return {
       id,
+      canonical_id: `sha256:${"0".repeat(64)}`,
+      content_fingerprint: "0".repeat(64),
       url: `https://${id}.example/`,
+      mirror_urls: [],
       publisher: id,
       title: id,
       timestamp: null,
       timestamp_source: "none",
+      timestamp_confidence: "none",
+      timestamp_conflict: null,
       text: "",
       passage: "",
       outbound_links: [],

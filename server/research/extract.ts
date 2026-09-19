@@ -1,16 +1,27 @@
 import * as cheerio from "cheerio";
 import type { z } from "zod";
-import type { TimestampSource } from "../../shared/tree";
+import type { TimestampConfidence, TimestampSource } from "../../shared/tree";
+import { canonicalDocumentId, contentFingerprint } from "./fingerprint";
 import { canonicalText, extractCaseNames, matchFabricated, matchKey } from "./text";
+import { selectTimestampEvidence, toIso, urlTimestampEvidence, type TimestampEvidence } from "./timestamps";
 
 /** Everything Lineage knows about one discovered page, derived from its HTML. */
 export interface CandidateDocument {
   id: string;
+  /** SHA-256 identity for the extracted artifact, independent of where it was hosted. */
+  canonical_id: string;
+  /** SHA-256 of the narrowly normalized extracted text. */
+  content_fingerprint: string;
   url: string;
+  /** Other URLs serving this exact artifact. The canonical `url` is not repeated here. */
+  mirror_urls: string[];
   publisher: string;
   title: string;
   timestamp: string | null;
   timestamp_source: z.infer<typeof TimestampSource>;
+  timestamp_confidence: z.infer<typeof TimestampConfidence>;
+  /** Conflicting strong document-date signals, before any graph/link-derived conflict. */
+  timestamp_conflict: string | null;
   text: string;
   passage: string;
   outbound_links: string[];
@@ -47,30 +58,19 @@ export function canonicalUrl(url: string): string {
   }
 }
 
-function toIso(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
-  const time = Date.parse(dateOnly);
-  if (Number.isNaN(time)) return null;
-  const year = new Date(time).getUTCFullYear();
-  if (year < 1990 || time > Date.now() + 86_400_000) return null;
-  return new Date(time).toISOString();
-}
-
-function jsonLdDate(node: unknown): string | null {
-  if (!node || typeof node !== "object") return null;
+function jsonLdDates(node: unknown): string[] {
+  if (!node || typeof node !== "object") return [];
   if (Array.isArray(node)) {
+    const dates: string[] = [];
     for (const item of node) {
-      const found = jsonLdDate(item);
-      if (found) return found;
+      dates.push(...jsonLdDates(item));
     }
-    return null;
+    return dates;
   }
   const record = node as Record<string, unknown>;
-  if (typeof record.datePublished === "string") return record.datePublished;
-  if (record["@graph"]) return jsonLdDate(record["@graph"]);
-  return null;
+  const dates = typeof record.datePublished === "string" ? [record.datePublished] : [];
+  if (record["@graph"]) dates.push(...jsonLdDates(record["@graph"]));
+  return dates;
 }
 
 function jsonLdPublisher(node: unknown): string | null {
@@ -93,7 +93,13 @@ function findTimestamp(
   $: cheerio.CheerioAPI,
   url: string,
   searchPublished: string | undefined,
-): { timestamp: string | null; source: CandidateDocument["timestamp_source"] } {
+): {
+  timestamp: string | null;
+  source: CandidateDocument["timestamp_source"];
+  confidence: CandidateDocument["timestamp_confidence"];
+  conflict: CandidateDocument["timestamp_conflict"];
+} {
+  const evidence: TimestampEvidence[] = [];
   const metaNames = [
     'meta[property="article:published_time"]',
     'meta[property="og:published_time"]',
@@ -107,26 +113,28 @@ function findTimestamp(
   ];
   for (const selector of metaNames) {
     const value = toIso($(selector).attr("content"));
-    if (value) return { timestamp: value, source: "meta" };
+    if (value) evidence.push({ timestamp: value, source: "meta", confidence: "strong" });
   }
   for (const element of $('script[type="application/ld+json"]').toArray()) {
     try {
-      const value = toIso(jsonLdDate(JSON.parse($(element).text())));
-      if (value) return { timestamp: value, source: "json-ld" };
+      for (const raw of jsonLdDates(JSON.parse($(element).text()))) {
+        const value = toIso(raw);
+        if (value) evidence.push({ timestamp: value, source: "json-ld", confidence: "strong" });
+      }
     } catch {
       // Malformed JSON-LD is common; ignore it.
     }
   }
-  const timeValue = toIso($("article time[datetime], main time[datetime], time[datetime]").first().attr("datetime"));
-  if (timeValue) return { timestamp: timeValue, source: "time-element" };
-  const urlDate = new URL(url).pathname.match(/\/(\d{4})\/(\d{2})\/(\d{2})\//);
-  if (urlDate) {
-    const value = toIso(`${urlDate[1]}-${urlDate[2]}-${urlDate[3]}`);
-    if (value) return { timestamp: value, source: "url" };
+  for (const element of $("article time[datetime], main time[datetime], time[datetime]").toArray()) {
+    const value = toIso($(element).attr("datetime"));
+    if (value) evidence.push({ timestamp: value, source: "time-element", confidence: "strong" });
   }
+  const urlEvidence = urlTimestampEvidence(url);
+  if (urlEvidence) evidence.push(urlEvidence);
   const searchValue = toIso(searchPublished);
-  if (searchValue) return { timestamp: searchValue, source: "search-result" };
-  return { timestamp: null, source: "none" };
+  if (searchValue) evidence.push({ timestamp: searchValue, source: "search-result", confidence: "weak" });
+  const selected = selectTimestampEvidence(evidence);
+  return { timestamp: selected.timestamp, source: selected.source, confidence: selected.confidence, conflict: selected.conflict };
 }
 
 /**
@@ -141,7 +149,11 @@ export interface ParsedDocument {
   publisher: string;
   timestamp: string | null;
   timestamp_source: CandidateDocument["timestamp_source"];
+  timestamp_confidence: CandidateDocument["timestamp_confidence"];
+  timestamp_conflict: CandidateDocument["timestamp_conflict"];
   text: string;
+  /** Optional extractor-specific structure that must participate in exact artifact identity. */
+  fingerprint_text?: string;
   outbound_links: string[];
 }
 
@@ -154,6 +166,7 @@ export interface AssembleOptions {
 
 /** Case names, fabricated-citation matches and the best passage: the same for every content type. */
 export function assembleDocument(parsed: ParsedDocument, options: AssembleOptions): CandidateDocument {
+  const fingerprint = contentFingerprint(parsed.fingerprint_text ?? parsed.text);
   const paragraphs = parsed.text
     .split(/\n+/)
     .map((line) => line.trim())
@@ -181,11 +194,16 @@ export function assembleDocument(parsed: ParsedDocument, options: AssembleOption
 
   return {
     id: documentId(parsed.url),
+    canonical_id: canonicalDocumentId(fingerprint),
+    content_fingerprint: fingerprint,
     url: parsed.url,
+    mirror_urls: [],
     publisher: parsed.publisher,
     title: parsed.title,
     timestamp: parsed.timestamp,
     timestamp_source: parsed.timestamp_source,
+    timestamp_confidence: parsed.timestamp_confidence,
+    timestamp_conflict: parsed.timestamp_conflict,
     text: parsed.text,
     passage,
     outbound_links: parsed.outbound_links,
@@ -214,15 +232,17 @@ export function parseHtmlPage(url: string, html: string, searchPublished?: strin
   }
   publisher ||= new URL(canonical).hostname.replace(/^www\./, "");
 
-  const { timestamp, source } = findTimestamp($, canonical, searchPublished);
+  const { timestamp, source, confidence, conflict } = findTimestamp($, canonical, searchPublished);
 
   const content = $("article").length ? $("article") : $("main").length ? $("main") : $("body");
   content.find("nav, header, footer, script, style, aside").remove();
 
-  const text = content
+  const rawParagraphs = content
     .find("p, li, blockquote")
     .toArray()
-    .map((element) => canonicalText($(element).text()))
+    .map((element) => $(element).text());
+  const text = rawParagraphs
+    .map((paragraph) => canonicalText(paragraph))
     .filter((paragraph) => paragraph.length > 0)
     .join("\n");
 
@@ -246,7 +266,11 @@ export function parseHtmlPage(url: string, html: string, searchPublished?: strin
     publisher,
     timestamp,
     timestamp_source: source,
+    timestamp_confidence: confidence,
+    timestamp_conflict: conflict,
     text,
+    // Matching retains the established canonical text, while identity only collapses whitespace.
+    fingerprint_text: rawParagraphs.join("\n"),
     outbound_links: [...outbound],
   };
 }

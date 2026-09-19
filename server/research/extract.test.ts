@@ -48,6 +48,7 @@ describe("document extraction", () => {
     expect(doc.publisher).toBe("News Example");
     expect(doc.timestamp).toBe("2023-12-13T15:00:00.000Z");
     expect(doc.timestamp_source).toBe("meta");
+    expect(doc.timestamp_confidence).toBe("strong");
     expect(doc.passage).toContain("United States v. Ortiz");
     expect(doc.fabricated_citations).toEqual(["United States v. Ortiz", "United States v. Amato"]);
     expect(doc.outbound_links).toEqual(["https://news.example/docs/order"]);
@@ -61,8 +62,12 @@ describe("document extraction", () => {
   });
 
   it("uses a date in the URL, then the search result date, then nothing", () => {
-    expect(extract(html("", "<p>x</p>"), "https://d.example/2023/12/01/story").timestamp_source).toBe("url");
-    expect(extract(html("", "<p>x</p>"), "https://d.example/story", "2023-12-13").timestamp_source).toBe("search-result");
+    const urlDate = extract(html("", "<p>x</p>"), "https://d.example/2023/12/01/story");
+    expect(urlDate.timestamp_source).toBe("url");
+    expect(urlDate.timestamp_confidence).toBe("weak");
+    const searchDate = extract(html("", "<p>x</p>"), "https://d.example/story", "2023-12-13");
+    expect(searchDate.timestamp_source).toBe("search-result");
+    expect(searchDate.timestamp_confidence).toBe("weak");
     const none = extract(html("", "<p>x</p>"));
     expect(none.timestamp).toBeNull();
     expect(none.timestamp_source).toBe("none");
@@ -72,5 +77,17 @@ describe("document extraction", () => {
     const doc = extract(html(`<meta name="date" content="1850-01-01">`, "<p>x</p>"), "https://www.forum.example/t/1");
     expect(doc.publisher).toBe("forum.example");
     expect(doc.timestamp).toBeNull();
+  });
+
+  it("marks incompatible strong HTML publication dates as a conflict", () => {
+    const doc = extract(
+      html(
+        `<meta property="article:published_time" content="2023-11-29T10:00:00Z"><script type="application/ld+json">{"datePublished":"2023-12-12T10:00:00Z"}</script>`,
+        "<p>x</p>",
+      ),
+    );
+    expect(doc.timestamp).toBeNull();
+    expect(doc.timestamp_source).toBe("none");
+    expect(doc.timestamp_conflict).toContain("conflicting strong timestamp evidence");
   });
 });
