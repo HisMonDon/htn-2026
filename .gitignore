@@ -13,3 +13,4 @@ browserbase-replays/
 replays/
 session-recordings/
 .devswarm-temp/
+.scratch/

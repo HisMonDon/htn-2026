@@ -1,8 +1,9 @@
 import type { AiEvidence } from "../../shared/schema";
 import type { LineageTree, RejectedEdge, TreeEdge, TreeNode } from "../../shared/tree";
 import type { CandidateIndex } from "./candidate-index";
-import { computeTimings, MIN_COVERAGE, ordering, round, scoreEdge, type ScoredEdge, type Timing } from "./edges";
+import { computeTimings, MIN_COVERAGE, ordering, round, scoreEdge, temporalEvidence as temporal, type ScoredEdge } from "./edges";
 import type { CandidateDocument } from "./extract";
+import { analyzeClaimMutations } from "./mutations";
 import { matchKey } from "./text";
 
 /** Minimum confidence for an accepted edge. Below this a node stays a root. */
@@ -22,6 +23,8 @@ export interface BuildInput {
   documents: CandidateDocument[];
   index: CandidateIndex;
   aiEvidence?: Map<string, AiEvidence>;
+  status?: LineageTree["status"];
+  diagnostics?: LineageTree["diagnostics"];
   stats: Omit<LineageTree["stats"], "retrieval" | "pairs_scored" | "candidates">;
   now?: () => Date;
 }
@@ -34,18 +37,6 @@ function coverageOf(doc: CandidateDocument, fabricated: string[]): number {
 
 function iso(ms: number | null): string | null {
   return ms === null ? null : new Date(ms).toISOString();
-}
-
-function temporal(parent: Timing, child: Timing, ordering: ScoredEdge["signals"]["ordering"]): TreeEdge["temporal"] {
-  const parentTime = parent.exact ? parent.claimed : parent.effective;
-  const childTime = child.effective;
-  return {
-    parent_time: iso(parentTime),
-    child_time: iso(childTime),
-    gap_days:
-      parentTime !== null && childTime !== null ? round((childTime - parentTime) / 86_400_000) : null,
-    ordering: ordering === "impossible" ? "unknown" : ordering,
-  };
 }
 
 export async function buildTree(input: BuildInput): Promise<LineageTree> {
@@ -117,13 +108,19 @@ export async function buildTree(input: BuildInput): Promise<LineageTree> {
     );
   }
 
-  // 4. Choose parents, earliest children first, refusing cycles.
-  const parentOf = new Map<string, string>();
+  // 4. Assemble validated ancestry, earliest children first, refusing cycles. Explicitly linked
+  // relationships are independently meaningful, so retain all that validate. When there is no
+  // explicit source relationship, retain only the strongest inferred parent.
+  const acceptedChildren = new Map<string, Set<string>>();
   const createsCycle = (parent: string, child: string) => {
-    let current: string | undefined = parent;
-    while (current !== undefined) {
-      if (current === child) return true;
-      current = parentOf.get(current);
+    const pending = [child];
+    const seen = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (current === parent) return true;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      pending.push(...(acceptedChildren.get(current) ?? []));
     }
     return false;
   };
@@ -137,51 +134,58 @@ export async function buildTree(input: BuildInput): Promise<LineageTree> {
   const rejected: RejectedEdge[] = [];
   for (const child of order) {
     const candidates = scored.get(child.id) ?? [];
-    const acceptable = candidates.filter(
-      (edge) => !edge.impossible && edge.strong && edge.confidence >= ACCEPT_THRESHOLD && !createsCycle(edge.parent_id, child.id),
+    const validated = candidates.filter(
+      (edge) => !edge.impossible && edge.strong && edge.confidence >= ACCEPT_THRESHOLD,
     );
-    const best = acceptable[0];
-    const runnerUp = acceptable[1];
+    const explicit = validated.filter((edge) => edge.signals.explicit_link);
+    const selected = explicit.length > 0 ? explicit : validated.slice(0, 1);
+    const acceptedForChild: ScoredEdge[] = [];
 
-    if (best) {
-      let confidence = best.confidence;
-      const basis = [...best.reasons];
-      if (runnerUp && best.confidence - runnerUp.confidence <= AMBIGUITY_MARGIN) {
+    for (const candidate of selected) {
+      if (createsCycle(candidate.parent_id, child.id)) continue;
+      let confidence = candidate.confidence;
+      const basis = [...candidate.reasons];
+      const runnerUp = explicit.length === 0 ? validated[1] : undefined;
+      if (runnerUp && candidate.confidence - runnerUp.confidence <= AMBIGUITY_MARGIN) {
         confidence = round(confidence * AMBIGUITY_FACTOR);
         basis.push(`ambiguous with ${runnerUp.parent_id} (${runnerUp.confidence}); chose the more recent/specific source`);
       }
-      parentOf.set(child.id, best.parent_id);
+      const children = acceptedChildren.get(candidate.parent_id) ?? new Set<string>();
+      children.add(child.id);
+      acceptedChildren.set(candidate.parent_id, children);
+      acceptedForChild.push(candidate);
       edges.push({
-        parent_id: best.parent_id,
+        parent_id: candidate.parent_id,
         child_id: child.id,
-        type: (best.signals.explicit_link || best.signals.coverage >= MIN_COVERAGE) && confidence >= 0.5 ? "propagation" : "similarity",
+        type: (candidate.signals.explicit_link || candidate.signals.coverage >= MIN_COVERAGE) && confidence >= 0.5 ? "propagation" : "similarity",
         confidence,
         basis: basis.join("; "),
-        shared_mutations: [...best.signals.shared_fabricated, ...best.signals.shared_variants],
-        explicit_link: best.signals.explicit_link,
-        rare_shared_phrases: best.signals.unique_phrases,
-        similarity: best.signals.similarity,
-        temporal: temporal(timings.get(best.parent_id)!, timings.get(child.id)!, best.signals.ordering),
+        shared_mutations: [...candidate.signals.shared_fabricated, ...candidate.signals.shared_variants],
+        claim_mutations: analyzeClaimMutations(byId.get(candidate.parent_id)!, child),
+        explicit_link: candidate.signals.explicit_link,
+        rare_shared_phrases: candidate.signals.unique_phrases,
+        similarity: candidate.signals.similarity,
+        temporal: temporal(timings.get(candidate.parent_id)!, timings.get(child.id)!, candidate.signals.ordering),
         alternatives: candidates
-          .filter((edge) => edge !== best)
+          .filter((edge) => !selected.includes(edge))
           .slice(0, 3)
           .map((edge) => ({
             candidate_id: edge.parent_id,
             confidence: edge.confidence,
-            reason: edge.impossible ?? `${edge.confidence} < ${best.confidence}: ${edge.reasons.slice(0, 2).join("; ")}`,
+            reason: edge.impossible ?? `${edge.confidence} < ${candidate.confidence}: ${edge.reasons.slice(0, 2).join("; ")}`,
           })),
       });
     }
 
-    for (const edge of candidates.filter((candidate) => candidate !== best).slice(0, REJECTED_PER_CHILD)) {
+    for (const edge of candidates.filter((candidate) => !acceptedForChild.includes(candidate)).slice(0, REJECTED_PER_CHILD)) {
       const reason =
         edge.impossible ??
         (!edge.strong
           ? `insufficient evidence: ${edge.reasons.slice(-1)[0]}`
           : edge.confidence < ACCEPT_THRESHOLD
             ? `confidence ${edge.confidence} below ${ACCEPT_THRESHOLD}`
-            : best
-              ? `weaker than ${best.parent_id} (${edge.confidence} vs ${best.confidence})`
+            : acceptedForChild.length > 0
+              ? `weaker than validated parent${acceptedForChild.length === 1 ? "" : "s"} ${acceptedForChild.map((accepted) => accepted.parent_id).join(", ")} (${edge.confidence})`
               : "would create a cycle");
       rejected.push({ parent_id: edge.parent_id, child_id: child.id, confidence: edge.confidence, reason });
     }
@@ -212,7 +216,8 @@ export async function buildTree(input: BuildInput): Promise<LineageTree> {
       is_seed: doc.id === input.seedId,
     };
   });
-  const rootIds = order.filter((doc) => !parentOf.has(doc.id)).map((doc) => doc.id);
+  const childrenWithParents = new Set(edges.map((edge) => edge.child_id));
+  const rootIds = order.filter((doc) => !childrenWithParents.has(doc.id)).map((doc) => doc.id);
 
   return {
     seed: { claim: input.claim, url: input.seedUrl, fabricated_citations: input.fabricated },
@@ -222,6 +227,8 @@ export async function buildTree(input: BuildInput): Promise<LineageTree> {
     edges,
     rejected_edges: rejected,
     excluded,
+    status: input.status ?? "complete",
+    diagnostics: input.diagnostics ?? [],
     stats: {
       ...input.stats,
       retrieval: input.index.kind,

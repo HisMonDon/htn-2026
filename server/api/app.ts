@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { DraftFields } from "../../shared/schema";
 import type { LineageTree } from "../../shared/tree";
-import type { ResearchInput } from "../research/pipeline";
+import { ResearchStageError, type ResearchInput } from "../research/pipeline";
 import { scoreParents } from "../provenance/score";
 import { HttpError, type LineageService } from "../service";
 
@@ -133,11 +133,12 @@ export function createApi(service: LineageService, info: ApiInfo, options: ApiOp
         try {
           tree = await options.research(body);
         } catch (error) {
+          if (error instanceof ResearchStageError) throw new HttpError(422, error.message, error.stage);
           throw new HttpError(422, error instanceof Error ? error.message : "research failed");
         }
         const id = randomUUID();
         trees.set(id, tree);
-        return { id, tree };
+        return { id, status: tree.status, tree };
       },
     ],
     [
@@ -146,7 +147,7 @@ export function createApi(service: LineageService, info: ApiInfo, options: ApiOp
       async ([id]) => {
         const tree = trees.get(id!);
         if (!tree) throw new HttpError(404, `unknown research result "${id}"`);
-        return { id, tree };
+        return { id, status: tree.status, tree };
       },
     ],
     [
@@ -189,8 +190,8 @@ export function createApi(service: LineageService, info: ApiInfo, options: ApiOp
         const params = match.slice(1).map((part) => decodeURIComponent(part));
         return send(200, await handler(params, req));
       } catch (error) {
-        if (error instanceof HttpError) return send(error.status, { error: error.message });
-        return send(500, { error: error instanceof Error ? error.message : "internal error" });
+        if (error instanceof HttpError) return send(error.status, { status: "failed", stage: error.stage, error: error.message });
+        return send(500, { status: "failed", stage: null, error: "internal error" });
       }
     }
     send(pathMatched ? 405 : 404, { error: pathMatched ? "method not allowed" : "not found" });

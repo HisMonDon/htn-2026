@@ -1,3 +1,4 @@
+import type { TreeEdge } from "../../shared/tree";
 import type { CandidateDocument } from "./extract";
 import { canonicalText, jaccard, matchKey, shingles } from "./text";
 
@@ -136,6 +137,22 @@ export function ordering(parent: CandidateDocument, child: CandidateDocument, ti
   }
   // Child only has a lower bound: the parent is certainly earlier if it predates that bound.
   return p.claimed <= c.effective ? "from-link" : "unknown";
+}
+
+/**
+ * The dated view of an edge: what each side claims, the gap, and how firmly they are ordered.
+ * `impossible` is reported as `unknown` — an edge that cannot exist carries no usable ordering.
+ */
+export function temporalEvidence(parent: Timing, child: Timing, order: Ordering): TreeEdge["temporal"] {
+  const parentTime = parent.exact ? parent.claimed : parent.effective;
+  const childTime = child.effective;
+  const iso = (time: number | null) => (time === null ? null : new Date(time).toISOString());
+  return {
+    parent_time: iso(parentTime),
+    child_time: iso(childTime),
+    gap_days: parentTime !== null && childTime !== null ? round((childTime - parentTime) / 86_400_000) : null,
+    ordering: order === "impossible" ? "unknown" : order,
+  };
 }
 
 export interface ScoringContext {

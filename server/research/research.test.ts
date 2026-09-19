@@ -75,6 +75,32 @@ describe("discovery", () => {
     expect(result.fabricated).toHaveLength(3);
     expect(result.documents.find((doc) => doc.id === ID.digest)?.fabricated_citations).toHaveLength(3);
   });
+
+  it("returns the recovered reconstruction as partial with a structured fetch diagnostic", async () => {
+    const missing = "https://sources.test/unavailable";
+    const corpusSearch = new CorpusSearch(CORPUS);
+    const corpusFetcher = new CorpusFetcher(CORPUS);
+    const search: SearchProvider = {
+      kind: "offline-corpus",
+      async search(query, limit) {
+        return [{ url: missing, title: "Unavailable source", published: null }, ...(await corpusSearch.search(query, limit))];
+      },
+    };
+    const fetcher: PageFetcher = {
+      async fetch(url) {
+        if (url === missing) throw new Error("network unavailable");
+        return corpusFetcher.fetch(url);
+      },
+    };
+    const tree = await runResearch({ claim: CLAIM }, { search, fetcher, index: new MemoryIndex(), now: fixedNow });
+
+    expect(tree.status).toBe("partial");
+    expect(tree.edges.length).toBeGreaterThan(0);
+    expect(tree.diagnostics).toContainEqual(
+      expect.objectContaining({ stage: "fetch", source: missing, category: "network-error", recoverable: true }),
+    );
+    expect(() => LineageTree.parse(tree)).not.toThrow();
+  });
 });
 
 describe("tree reconstruction from the messy pool", () => {
@@ -82,20 +108,19 @@ describe("tree reconstruction from the messy pool", () => {
     const tree = await reconstruct();
     expect(() => LineageTree.parse(tree)).not.toThrow();
     expect(tree.root_ids).toEqual([ID.bard]);
-    const parent = Object.fromEntries(tree.edges.map((edge) => [edge.child_id, edge.parent_id]));
-    expect(parent).toEqual({
-      [ID.email]: ID.bard,
-      [ID.motion]: ID.email,
-      [ID.digest]: ID.motion,
-      [ID.order]: ID.motion,
-      [ID.wire]: ID.order,
-      [ID.misdated]: ID.wire,
-      [ID.declaration]: ID.order,
-      [ID.ledger]: ID.declaration,
-      [ID.forum]: ID.ledger,
-      [ID.blog]: ID.ledger,
-      [ID.tracker]: ID.ledger,
-    });
+    const parents = (child: string) =>
+      tree.edges.filter((edge) => edge.child_id === child).map((edge) => edge.parent_id).sort();
+    expect(parents(ID.email)).toEqual([ID.bard]);
+    expect(parents(ID.motion)).toEqual([ID.email]);
+    expect(parents(ID.digest)).toEqual([ID.motion]);
+    expect(parents(ID.order)).toEqual([ID.motion]);
+    expect(parents(ID.wire)).toEqual([ID.order]);
+    expect(parents(ID.misdated)).toEqual([ID.wire]);
+    expect(parents(ID.declaration)).toEqual([ID.order]);
+    expect(parents(ID.ledger)).toEqual([ID.declaration, ID.wire].sort());
+    expect(parents(ID.forum)).toEqual([ID.ledger]);
+    expect(parents(ID.blog)).toEqual([ID.ledger]);
+    expect(parents(ID.tracker)).toEqual([ID.ledger, ID.wire].sort());
   });
 
   it("excludes decoys with reasons: another AI incident, a real same-name case, topical coverage", async () => {
@@ -145,8 +170,22 @@ describe("tree reconstruction from the messy pool", () => {
     expect(motion.alternatives.map((alt) => alt.candidate_id)).toContain(ID.bard);
     expect(motion.basis).toContain("copied 6-word phrase");
 
-    const ledger = tree.edges.find((edge) => edge.child_id === ID.ledger)!;
-    expect(ledger.basis).toContain(`ambiguous with ${ID.wire}`);
+    const ledger = tree.edges.filter((edge) => edge.child_id === ID.ledger);
+    expect(ledger).toHaveLength(2);
+    expect(ledger.every((edge) => edge.explicit_link)).toBe(true);
+    expect(ledger.flatMap((edge) => edge.alternatives.map((alternative) => alternative.candidate_id))).not.toEqual(
+      expect.arrayContaining([ID.declaration, ID.wire]),
+    );
+  });
+
+  it("describes claim mutations on every accepted relationship", async () => {
+    const tree = await reconstruct();
+    expect(tree.edges.every((edge) => edge.claim_mutations.length > 0)).toBe(true);
+    const orderToWire = tree.edges.find((edge) => edge.parent_id === ID.order && edge.child_id === ID.wire)!;
+    expect(orderToWire.claim_mutations.map((mutation) => mutation.type)).toEqual(
+      expect.arrayContaining(["added", "omitted"]),
+    );
+    expect(orderToWire.claim_mutations.every((mutation) => mutation.summary.length > 10)).toBe(true);
   });
 
   it("keeps copied phrasing without a link below strong-propagation confidence", async () => {
@@ -165,6 +204,12 @@ describe("tree reconstruction from the messy pool", () => {
       tree.edges.map((edge) => `${edge.parent_id}>${edge.child_id}:${edge.confidence}`).sort();
     expect(edges(b)).toEqual(edges(a));
     expect(b.root_ids).toEqual(a.root_ids);
+  });
+
+  it("is byte-stable for repeated deterministic fixture runs", async () => {
+    const a = await reconstruct();
+    const b = await reconstruct();
+    expect(b).toEqual(a);
   });
 
   it("records GPTZero evidence on nodes without changing any edge", async () => {

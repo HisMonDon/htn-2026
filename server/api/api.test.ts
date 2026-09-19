@@ -117,8 +117,17 @@ describe("research API", () => {
       });
       expect(created.status).toBe(200);
       const body = (await created.json()) as any;
+      expect(body.status).toBe("complete");
+      expect(body.tree.status).toBe("complete");
+      expect(body.tree.diagnostics).toEqual([]);
       expect(body.tree.nodes.length).toBeGreaterThan(5);
-      expect(body.tree.edges.length).toBe(body.tree.nodes.length - body.tree.root_ids.length);
+      // A validated DAG may have merge points, so it can carry more than one incoming edge per
+      // non-root while still keeping every accepted relationship unique and acyclic.
+      expect(body.tree.edges.length).toBeGreaterThanOrEqual(body.tree.nodes.length - body.tree.root_ids.length);
+      expect(new Set(body.tree.edges.map((edge: any) => `${edge.parent_id}>${edge.child_id}`)).size).toBe(
+        body.tree.edges.length,
+      );
+      expect(body.tree.edges.every((edge: any) => Array.isArray(edge.claim_mutations))).toBe(true);
       expect(body.tree.stats.retrieval).toBe("memory-bm25");
 
       const again = (await (await fetch(`${url}/api/research/${body.id}`)).json()) as any;
@@ -132,6 +141,7 @@ describe("research API", () => {
         body: JSON.stringify({ claim: "nothing citable here" }),
       });
       expect(none.status).toBe(422);
+      expect((await none.json()).status).toBe("failed");
     } finally {
       await new Promise((resolve) => research.close(resolve));
     }

@@ -78,6 +78,13 @@ export interface EdgeAlternative {
   reason: string;
 }
 
+export interface ClaimMutation {
+  type: "added" | "omitted" | "reframed";
+  summary: string;
+  before: string | null;
+  after: string | null;
+}
+
 export interface LineageTreeEdge {
   parent_id: string;
   child_id: string;
@@ -85,6 +92,7 @@ export interface LineageTreeEdge {
   confidence: number;
   basis: string;
   shared_mutations: string[];
+  claim_mutations: ClaimMutation[];
   explicit_link: boolean;
   rare_shared_phrases: number;
   similarity: number;

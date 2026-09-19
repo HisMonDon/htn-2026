@@ -1,9 +1,10 @@
 import type { TreeEdge } from "../../shared/tree";
 import { canonicalizeDocuments } from "./canonicalize";
 import { claimTerms } from "./discovery";
-import { computeTimings, MIN_COVERAGE, ordering, round, scoreEdge, type ScoredEdge, type Timing } from "./edges";
+import { computeTimings, MIN_COVERAGE, ordering, scoreEdge, temporalEvidence as temporal, type ScoredEdge, type Timing } from "./edges";
 import { canonicalUrl, type CandidateDocument } from "./extract";
-import { ingestSourceReference } from "./ingestion";
+import { ingestSourceReference, type IngestionFailure } from "./ingestion";
+import { analyzeClaimMutations } from "./mutations";
 import type { PageFetcher, SourceReference, SourceResolver } from "./providers";
 import { ACCEPT_THRESHOLD } from "./tree";
 
@@ -30,6 +31,8 @@ export type UpstreamAnalysis = readonly UpstreamProposal[] | CompletedUpstreamAn
 export interface CompletedUpstreamAnalysis {
   status: "completed";
   proposals: readonly UpstreamProposal[];
+  /** Set when this result was served from a provider's offline fallback instead of a live call. */
+  fallback?: { provenance: "cached_demo_fallback"; capturedAt: string } | null;
 }
 
 export interface PendingUpstreamAnalysis {
@@ -91,6 +94,17 @@ export interface RejectedProposedEdge {
   confidence: number | null;
   reason: string;
   termination: ProposedEdgeTerminationReason;
+  stage?: IngestionFailure["stage"];
+  category?: string;
+  recoverable?: boolean;
+}
+
+export interface TraversalDiagnostic {
+  stage: "gptzero" | "resolution" | "fetch" | "extraction" | "validation" | "traversal";
+  source: string | null;
+  category: string;
+  message: string;
+  recoverable: boolean;
 }
 
 export interface AcceptedProposedEdge extends TreeEdge {
@@ -109,7 +123,8 @@ export interface RecursiveProvenanceTraversal {
   terminations: SourceTermination[];
   /** Pending work is never mistaken for a rejected edge or a completed source. */
   pending_jobs: PendingAnalysisJob[];
-  status: "complete" | "paused";
+  diagnostics: TraversalDiagnostic[];
+  status: "complete" | "partial" | "failed" | "paused";
   /** Pass this opaque, serializable state to a later call to continue queued or provider-pending work. */
   checkpoint: TraversalCheckpoint | null;
   stats: {
@@ -169,6 +184,7 @@ export interface TraversalCheckpoint {
   accepted: AcceptedTraversalRecord[];
   rejected_edges: RejectedProposedEdge[];
   terminations: SourceTermination[];
+  diagnostics: TraversalDiagnostic[];
   reference_to_key: Array<[string, string]>;
   failed_references: Array<[string, string]>;
   stats: Omit<RecursiveProvenanceTraversal["stats"], "max_depth" | "sources_expanded">;
@@ -213,18 +229,6 @@ function sourceFromDocuments(key: string, documents: Map<string, CandidateDocume
   return document;
 }
 
-function temporal(parent: Timing, child: Timing, value: ScoredEdge["signals"]["ordering"]): TreeEdge["temporal"] {
-  const parentTime = parent.exact ? parent.claimed : parent.effective;
-  const childTime = child.effective;
-  const iso = (time: number | null) => (time === null ? null : new Date(time).toISOString());
-  return {
-    parent_time: iso(parentTime),
-    child_time: iso(childTime),
-    gap_days: parentTime !== null && childTime !== null ? round((childTime - parentTime) / 86_400_000) : null,
-    ordering: value === "impossible" ? "unknown" : value,
-  };
-}
-
 function treeEdge(
   score: ScoredEdge,
   parent: CandidateDocument,
@@ -240,6 +244,7 @@ function treeEdge(
     confidence: score.confidence,
     basis: score.reasons.join("; "),
     shared_mutations: [...score.signals.shared_fabricated, ...score.signals.shared_variants],
+    claim_mutations: analyzeClaimMutations(parent, child),
     explicit_link: score.signals.explicit_link,
     rare_shared_phrases: score.signals.unique_phrases,
     similarity: score.signals.similarity,
@@ -289,6 +294,7 @@ export async function traverseProvenance(
   const accepted: AcceptedTraversalRecord[] = checkpoint?.accepted.map((edge) => ({ ...edge })) ?? [];
   const rejected: RejectedProposedEdge[] = checkpoint?.rejected_edges.map((edge) => ({ ...edge })) ?? [];
   const terminations: SourceTermination[] = checkpoint?.terminations.map((entry) => ({ ...entry })) ?? [];
+  const diagnostics: TraversalDiagnostic[] = checkpoint?.diagnostics.map((entry) => ({ ...entry })) ?? [];
   let proposalsReceived = checkpoint?.stats.proposals_received ?? 0;
   let fetched = checkpoint?.stats.fetched ?? 0;
   let fetchFailures = checkpoint?.stats.fetch_failures ?? 0;
@@ -372,6 +378,13 @@ export async function traverseProvenance(
         reason: "provider-failure",
         detail: error instanceof Error ? error.message : "provider failed",
       });
+      diagnostics.push({
+        stage: "gptzero",
+        source: child.url,
+        category: "provider-failure",
+        message: "upstream proposal analysis failed",
+        recoverable: true,
+      });
       continue;
     }
     if (isPendingAnalysis(analysis)) {
@@ -388,6 +401,15 @@ export async function traverseProvenance(
       break;
     }
     const proposals = isProposalList(analysis) ? analysis : analysis.proposals;
+    if (!isProposalList(analysis) && analysis.fallback) {
+      diagnostics.push({
+        stage: "gptzero",
+        source: child.url,
+        category: analysis.fallback.provenance,
+        message: `using cached bibliography fallback captured ${analysis.fallback.capturedAt}`,
+        recoverable: true,
+      });
+    }
     proposalsReceived += proposals.length;
     if (proposals.length === 0) {
       terminations.push({ source_id: child.id, url: child.url, depth: current.depth, reason: "no-proposals", detail: null });
@@ -443,6 +465,16 @@ export async function traverseProvenance(
             confidence: null,
             reason: failure,
             termination: "fetch-failure",
+            stage: ingested.stage,
+            category: ingested.category,
+            recoverable: ingested.recoverable,
+          });
+          diagnostics.push({
+            stage: ingested.stage,
+            source: requestedUrl,
+            category: ingested.category,
+            message: ingested.detail ?? ingested.reason,
+            recoverable: ingested.recoverable,
           });
           continue;
         }
@@ -553,6 +585,7 @@ export async function traverseProvenance(
         accepted,
         rejected_edges: rejected,
         terminations,
+        diagnostics,
         reference_to_key: [...referenceToKey.entries()],
         failed_references: [...failedReferences.entries()],
         stats: {
@@ -563,6 +596,14 @@ export async function traverseProvenance(
         },
       }
     : null;
+  const interrupted = fetchFailures > 0 || terminations.some((entry) => entry.reason === "provider-failure");
+  const status: RecursiveProvenanceTraversal["status"] = paused
+    ? "paused"
+    : interrupted
+      ? accepted.length > 0
+        ? "partial"
+        : "failed"
+      : "complete";
   return {
     documents,
     accepted_edges: accepted.map((edge) =>
@@ -578,7 +619,8 @@ export async function traverseProvenance(
     rejected_edges: rejected,
     terminations,
     pending_jobs: paused ? [paused] : [],
-    status: paused ? "paused" : "complete",
+    diagnostics,
+    status,
     checkpoint: checkpointResult,
     stats,
   };

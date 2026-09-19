@@ -1,7 +1,7 @@
 import { assembleDocument, canonicalUrl, parseHtmlPage, type CandidateDocument, type ParsedDocument } from "./extract";
 import { canonicalizeDocuments } from "./canonicalize";
-import { extractPdfPages, parsePdfDocument } from "./pdf";
-import { fetchSource, type FetchedPage, type PageFetcher, type SearchProvider, type SourceReference, type SourceResolver } from "./providers";
+import { ingestFetchedPage } from "./ingestion";
+import { fetchSourceDetailed, type FetchedPage, type PageFetcher, type SearchProvider, type SourceReference, type SourceResolver } from "./providers";
 import { canonicalText, extractCaseNames, matchKey, tokens } from "./text";
 
 /**
@@ -33,8 +33,17 @@ export interface DiscoveryResult {
   failedQueries: string[];
   /** Fetched but could not be turned into a document, e.g. an encrypted or scanned PDF. Nonfatal. */
   extractionFailures: string[];
+  diagnostics: ResearchDiagnostic[];
   fetched: number;
   seedId: string | null;
+}
+
+export interface ResearchDiagnostic {
+  stage: "resolution" | "fetch" | "extraction";
+  source: string | null;
+  category: string;
+  message: string;
+  recoverable: boolean;
 }
 
 const STOPWORDS = new Set(
@@ -98,11 +107,22 @@ export async function discover(
   const queries: string[] = [];
   const failedQueries: string[] = [];
   const extractionFailures: string[] = [];
+  const diagnostics: ResearchDiagnostic[] = [];
   const attempted = new Set<string>();
   let fetched = 0;
   let fabricated = input.fabricated?.length ? [...input.fabricated] : extractCaseNames(input.claim);
   // Cached per document so the final re-extraction pass (below) never re-downloads or re-parses.
   const pages = new Map<string, { parsed: ParsedDocument; via: string }>();
+
+  const diagnosticSource = (value: string | null | undefined) => {
+    if (!value) return null;
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  };
 
   async function visitFetched(page: FetchedPage, via: string, published: string | null): Promise<CandidateDocument | null> {
     const key = canonicalUrl(page.url);
@@ -115,25 +135,28 @@ export async function discover(
     attempted.add(key);
     fetched += 1;
 
-    let parsed: ParsedDocument;
-    if (page.kind === "pdf") {
-      const extraction = await extractPdfPages(page.bytes);
-      if (!extraction.ok) {
-        extractionFailures.push(`${page.url}: ${extraction.reason}${extraction.detail ? ` (${extraction.detail})` : ""}`);
-        return null;
-      }
-      parsed = parsePdfDocument(page.url, extraction, published ?? undefined);
-    } else {
-      parsed = parseHtmlPage(page.url, page.html, published ?? undefined);
-    }
-
-    const doc = assembleDocument(parsed, {
+    const ingested = await ingestFetchedPage(page, {
       fabricated,
       claimTerms: claimTerms(input.claim, fabricated),
       discoveredVia: via,
+      published,
     });
+    if (!ingested.ok) {
+      diagnostics.push({
+        stage: ingested.stage,
+        source: diagnosticSource(page.url),
+        category: ingested.category,
+        message: ingested.detail ?? ingested.reason,
+        recoverable: ingested.recoverable,
+      });
+      if (ingested.stage === "extraction") {
+        extractionFailures.push(`${page.url}: ${ingested.reason}${ingested.detail ? ` (${ingested.detail})` : ""}`);
+      }
+      return null;
+    }
+    const doc = ingested.document;
     documents.set(doc.url, doc);
-    pages.set(doc.url, { parsed, via });
+    pages.set(doc.url, { parsed: ingested.parsed, via });
     return doc;
   }
 
@@ -146,20 +169,65 @@ export async function discover(
     }
     if (attempted.has(key) || documents.size >= maxDocuments) return null;
     attempted.add(key);
-    const page = await providers.fetcher.fetch(url);
+    let page: FetchedPage | null;
+    try {
+      if (providers.fetcher.fetchDetailed) {
+        const result = await providers.fetcher.fetchDetailed(url);
+        if (!result.ok) {
+          diagnostics.push({
+            stage: result.failure.stage,
+            source: diagnosticSource(result.failure.url),
+            category: result.failure.category,
+            message: result.failure.message,
+            recoverable: result.failure.recoverable,
+          });
+          return null;
+        }
+        page = result.page;
+      } else {
+        page = await providers.fetcher.fetch(url);
+      }
+    } catch {
+      diagnostics.push({
+        stage: "fetch",
+        source: diagnosticSource(url),
+        category: "network-error",
+        message: "source network request failed",
+        recoverable: true,
+      });
+      return null;
+    }
+    if (!page) {
+      diagnostics.push({
+        stage: "fetch",
+        source: diagnosticSource(url),
+        category: "http-404",
+        message: "source was not found",
+        recoverable: false,
+      });
+      return null;
+    }
     return page ? visitFetched(page, via, published) : null;
   }
 
   let seedUrl: string | null = null;
   const source = input.seedSource ?? (input.seedUrl ? { url: input.seedUrl } : null);
   if (source) {
-    const fetchedSource = await fetchSource(source, { fetcher: providers.fetcher, resolver: providers.resolver });
-    if (fetchedSource) {
-      const seed = await visitFetched(fetchedSource.page, fetchedSource.resolved ? "resolved source" : "seed", null);
+    const sourceResult = await fetchSourceDetailed(source, { fetcher: providers.fetcher, resolver: providers.resolver });
+    if (sourceResult.fetched) {
+      const seed = await visitFetched(sourceResult.fetched.page, sourceResult.fetched.resolved ? "resolved source" : "seed", null);
       if (seed) {
         seedUrl = seed.url;
         if (fabricated.length === 0) fabricated = seed.case_names;
       }
+    } else if (sourceResult.failure) {
+      diagnostics.push({
+        stage: sourceResult.failure.stage,
+        source: diagnosticSource(sourceResult.failure.url),
+        category: sourceResult.failure.category,
+        message: sourceResult.failure.message,
+        recoverable: sourceResult.failure.recoverable,
+      });
     }
   }
 
@@ -180,9 +248,9 @@ export async function discover(
     let hits: Awaited<ReturnType<SearchProvider["search"]>>;
     try {
       hits = await providers.search.search(query, perQuery);
-    } catch (error) {
+    } catch {
       // One failed search should not end the investigation; the query stays listed as failed.
-      failedQueries.push(`${query} (${error instanceof Error ? error.message : "failed"})`);
+      failedQueries.push(`${query} (search failed)`);
       return;
     }
     for (const hit of hits) await visit(hit.url, `search: ${query}`, hit.published);
@@ -235,7 +303,14 @@ export async function discover(
     fabricated,
     queries,
     failedQueries,
-    extractionFailures,
+    extractionFailures: [...extractionFailures].sort((a, b) => a.localeCompare(b)),
+    diagnostics: [...diagnostics].sort(
+      (a, b) =>
+        (a.source ?? "").localeCompare(b.source ?? "") ||
+        a.stage.localeCompare(b.stage) ||
+        a.category.localeCompare(b.category) ||
+        a.message.localeCompare(b.message),
+    ),
     fetched,
     seedId: seedUrl ? (canonicalized.idByUrl.get(seedUrl) ?? null) : null,
   };

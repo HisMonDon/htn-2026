@@ -7,7 +7,28 @@
  * (or adapt a `SearchProvider` with `SearchSourceResolver`) and point ../factory.ts at it. No
  * extraction, canonicalization, or graph code needs to change.
  */
-export type { FetchedPage, PageFetcher, SearchHit, SearchProvider, SourceReference, SourceResolver } from "./types";
+export type {
+  AuditMetadata,
+  FetchFailure,
+  FetchFailureCategory,
+  FetchResult,
+  FetchedPage,
+  PageFetcher,
+  SearchHit,
+  SearchProvider,
+  SourceReference,
+  SourceResolver,
+} from "./types";
+export { readAuditMetadata, toAuditMetadata } from "./types";
 export { CorpusSearch, CorpusFetcher } from "./corpus";
 export { DirectHttpFetcher, type DirectHttpFetcherOptions } from "./http";
-export { fetchSource, SearchSourceResolver, sourceLookupQuery, type FetchSourceOptions, type FetchedSource } from "./resolver";
+export {
+  fetchSource,
+  fetchSourceDetailed,
+  SearchSourceResolver,
+  sourceLookupQuery,
+  type FetchSourceOptions,
+  type FetchSourceResult,
+  type FetchedSource,
+  type SourceFetchFailure,
+} from "./resolver";

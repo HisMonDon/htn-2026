@@ -28,18 +28,32 @@ export interface ResearchDeps {
   now?: () => Date;
 }
 
+export class ResearchStageError extends Error {
+  constructor(
+    readonly stage: "resolution" | "reconstruction" | "serialization",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /** Claim in, reconstructed tree out: discover -> extract -> index/retrieve -> score -> assemble. */
 export async function runResearch(input: ResearchInput, deps: ResearchDeps): Promise<LineageTree> {
-  const discovered = await discover(
-    {
-      claim: input.claim,
-      seedUrl: input.seed_url ?? null,
-      seedSource: input.seed_source ?? null,
-      fabricated: input.fabricated_citations,
-    },
-    { search: deps.search, fetcher: deps.fetcher, resolver: deps.resolver },
-    deps.discovery,
-  );
+  let discovered: Awaited<ReturnType<typeof discover>>;
+  try {
+    discovered = await discover(
+      {
+        claim: input.claim,
+        seedUrl: input.seed_url ?? null,
+        seedSource: input.seed_source ?? null,
+        fabricated: input.fabricated_citations,
+      },
+      { search: deps.search, fetcher: deps.fetcher, resolver: deps.resolver },
+      deps.discovery,
+    );
+  } catch {
+    throw new ResearchStageError("resolution", "source discovery failed");
+  }
   if (discovered.fabricated.length === 0) {
     throw new Error("no fabricated citations could be identified from the claim or seed; pass fabricated_citations");
   }
@@ -56,24 +70,39 @@ export async function runResearch(input: ResearchInput, deps: ResearchDeps): Pro
     }
   }
 
-  const tree = await buildTree({
-    runId: randomUUID(),
-    claim: input.claim,
-    seedUrl: input.seed_url ?? null,
-    seedId: discovered.seedId,
-    fabricated: discovered.fabricated,
-    documents: discovered.documents,
-    index: deps.index,
-    aiEvidence,
-    stats: {
-      discovery:
-        deps.search.kind === "browserbase" || deps.search.kind === "offline-corpus" ? deps.search.kind : "unconfigured",
-      queries: discovered.queries,
-      failed_queries: discovered.failedQueries,
-      extraction_failures: discovered.extractionFailures,
-      fetched: discovered.fetched,
-    },
-    now: deps.now,
-  });
-  return LineageTree.parse(tree);
+  let tree: LineageTree;
+  try {
+    tree = await buildTree({
+      runId: randomUUID(),
+      claim: input.claim,
+      seedUrl: input.seed_url ?? null,
+      seedId: discovered.seedId,
+      fabricated: discovered.fabricated,
+      documents: discovered.documents,
+      index: deps.index,
+      aiEvidence,
+      status: "complete",
+      diagnostics: discovered.diagnostics,
+      stats: {
+        discovery:
+          deps.search.kind === "browserbase" || deps.search.kind === "offline-corpus" ? deps.search.kind : "unconfigured",
+        queries: discovered.queries,
+        failed_queries: discovered.failedQueries,
+        extraction_failures: discovered.extractionFailures,
+        fetched: discovered.fetched,
+      },
+      now: deps.now,
+    });
+  } catch {
+    throw new ResearchStageError("reconstruction", "provenance reconstruction failed");
+  }
+  tree = {
+    ...tree,
+    status: discovered.diagnostics.length === 0 ? "complete" : tree.edges.length > 0 ? "partial" : "failed",
+  };
+  try {
+    return LineageTree.parse(tree);
+  } catch {
+    throw new ResearchStageError("serialization", "research result could not be serialized");
+  }
 }
