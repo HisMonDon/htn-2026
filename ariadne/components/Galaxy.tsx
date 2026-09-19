@@ -96,14 +96,14 @@ vec3 StarLayer(vec2 uv) {
       float glossLocal = tri(uStarSpeed / (PERIOD * seed + 1.0));
       float flareSize = smoothstep(0.9, 1.0, size) * glossLocal;
 
-      float red = smoothstep(STAR_COLOR_CUTOFF, 1.0, Hash21(si + 1.0)) + STAR_COLOR_CUTOFF;
-      float blu = smoothstep(STAR_COLOR_CUTOFF, 1.0, Hash21(si + 3.0)) + STAR_COLOR_CUTOFF;
-      float grn = min(red, blu) * seed;
+      float red = 0.94901960784;
+      float blu = 0.70588235294;
+      float grn = 0.31764705882;
       vec3 base = vec3(red, grn, blu);
       
       float hue = atan(base.g - base.r, base.b - base.r) / (2.0 * 3.14159) + 0.5;
-      hue = fract(hue + uHueShift / 360.0);
-      float sat = length(base - vec3(dot(base, vec3(0.299, 0.587, 0.114)))) * uSaturation;
+      hue = fract(hue);
+      float sat = length(base - vec3(dot(base, vec3(0.299, 0.587, 0.114))));
       float val = max(max(base.r, base.g), base.b);
       base = hsv2rgb(vec3(hue, sat, val));
 
