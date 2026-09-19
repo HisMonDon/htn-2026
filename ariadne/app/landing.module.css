@@ -10,6 +10,13 @@
   text-transform: lowercase;
 }
 
+.scene {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 63.5%;
+  will-change: transform, filter;
+}
+
 .galaxy {
   position: absolute;
   inset: 0;
@@ -68,6 +75,33 @@
   pointer-events: none;
 }
 
+.whiteout {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0;
+  background: #fff;
+  will-change: opacity;
+}
+
+.transitioning {
+  cursor: wait;
+}
+
+.transitioning .scene {
+  animation: dive-into-star 1.5s cubic-bezier(0.72, 0, 0.84, 0.24) both;
+}
+
+.transitioning .content {
+  pointer-events: none;
+  animation: interface-departure 0.38s ease-in both;
+}
+
+.transitioning .whiteout {
+  animation: fade-to-white 0.7s 0.72s cubic-bezier(0.45, 0, 1, 1) both;
+}
+
 .header {
   display: flex;
   flex-direction: column;
@@ -111,6 +145,37 @@
   }
 }
 
+@keyframes dive-into-star {
+  0% {
+    filter: brightness(1) blur(0);
+    transform: scale(1);
+  }
+  58% {
+    filter: brightness(1.35) blur(0);
+  }
+  100% {
+    filter: brightness(2.25) blur(1.5px);
+    transform: scale(15);
+  }
+}
+
+@keyframes interface-departure {
+  to {
+    opacity: 0;
+    filter: blur(7px);
+    transform: scale(1.08);
+  }
+}
+
+@keyframes fade-to-white {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 768px) {
   .content {
     justify-content: center;
@@ -132,5 +197,14 @@
 @media (prefers-reduced-motion: reduce) {
   .header {
     animation: none;
+  }
+
+  .transitioning .scene,
+  .transitioning .content {
+    animation: none;
+  }
+
+  .transitioning .whiteout {
+    animation: fade-to-white 0.16s ease-out both;
   }
 }

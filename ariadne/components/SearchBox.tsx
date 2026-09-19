@@ -8,6 +8,7 @@ interface SearchBoxProps {
   value: string;
   onValueChange: (value: string) => void;
   onSubmit: (e: React.FormEvent) => void;
+  disabled?: boolean;
 }
 
 const suggestions = [
@@ -16,7 +17,12 @@ const suggestions = [
   "quantum computing",
 ];
 
-export default function SearchBox({ value, onValueChange, onSubmit }: SearchBoxProps) {
+export default function SearchBox({
+  value,
+  onValueChange,
+  onSubmit,
+  disabled = false,
+}: SearchBoxProps) {
   const [isFocused, setIsFocused] = useState(false);
   const glassRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -53,7 +59,7 @@ export default function SearchBox({ value, onValueChange, onSubmit }: SearchBoxP
             <button
               type="submit"
               className={styles.searchButton}
-              disabled={!value.trim()}
+              disabled={disabled || !value.trim()}
               aria-label="trace research"
             >
               <Search className={styles.searchIcon} strokeWidth={2.1} />
@@ -73,6 +79,7 @@ export default function SearchBox({ value, onValueChange, onSubmit }: SearchBoxP
               placeholder="search..."
               autoComplete="off"
               spellCheck="false"
+              disabled={disabled}
               aria-label="research topic"
               className={styles.input}
             />
@@ -80,6 +87,7 @@ export default function SearchBox({ value, onValueChange, onSubmit }: SearchBoxP
             <button
               type="button"
               onClick={() => updateValue("")}
+              disabled={disabled}
               className={`${styles.clearButton} ${value ? styles.clearVisible : ""}`}
               aria-label="clear search"
             >
@@ -96,6 +104,7 @@ export default function SearchBox({ value, onValueChange, onSubmit }: SearchBoxP
                     type="button"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => updateValue(suggestion)}
+                    disabled={disabled}
                   >
                     <TrendingUp size={15} strokeWidth={1.9} aria-hidden="true" />
                     <span>{suggestion}</span>

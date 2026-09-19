@@ -21,11 +21,13 @@ import {
   ROLE_COLOR,
   ROLE_LABEL,
   endpointId,
+  hasTimestampConflict,
+  isSubmittedNode,
   type GraphData,
   type GraphLink,
   type GraphNode,
 } from "@/lib/graph";
-import { displayTitle, formatDate, formatTimestamp, percent } from "@/lib/format";
+import { displayTitle, formatDate, formatTimestamp, passagePreview, percent } from "@/lib/format";
 import { computeProvenanceLayout } from "@/lib/layout";
 import { ConfidenceBar, Drawer, Field, StringList } from "./panel-ui";
 import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
@@ -45,15 +47,19 @@ function Endpoint({ id, node, role }: { id: string | null; node: GraphNode | und
         <>
           <p className="text-sm text-gray-100 leading-snug">{displayTitle(node)}</p>
           <p className="text-xs text-gray-500">{node.publisher || "unknown publisher"}</p>
-          <a
-            href={node.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-xs text-blue-400 hover:text-blue-300 underline break-all inline-flex items-center mt-1"
-          >
-            <ExternalLink size={11} className="mr-1 shrink-0" />
-            {node.url}
-          </a>
+          {isSubmittedNode(node) ? (
+            <p className="mt-1 text-xs text-blue-300/75">User-submitted text</p>
+          ) : (
+            <a
+              href={node.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-xs text-blue-400 hover:text-blue-300 underline break-all inline-flex items-center mt-1"
+            >
+              <ExternalLink size={11} className="mr-1 shrink-0" />
+              {node.url}
+            </a>
+          )}
         </>
       ) : (
         <p className="text-sm text-gray-400 break-all">{id ?? "unknown node"}</p>
@@ -69,6 +75,29 @@ const MAX_INITIAL_ZOOM = 2.6;
 const CARD_WIDTH = 194;
 const CARD_HEIGHT = 80;
 const CARD_RADIUS = 10;
+
+function Passage({ value }: { value: string }) {
+  const preview = passagePreview(value);
+
+  if (!preview.text) return <span className="text-gray-500">none captured</span>;
+
+  return (
+    <div className="space-y-3">
+      <p className="italic leading-relaxed text-gray-300">{preview.text}</p>
+      {preview.truncated && (
+        <details className="group rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
+          <summary className="cursor-pointer list-none text-xs text-blue-300/75 transition-colors hover:text-blue-200">
+            <span className="group-open:hidden">View full extracted passage</span>
+            <span className="hidden group-open:inline">Hide full extracted passage</span>
+          </summary>
+          <p className="mt-3 whitespace-pre-wrap border-t border-white/8 pt-3 text-sm italic leading-relaxed text-gray-400">
+            {value}
+          </p>
+        </details>
+      )}
+    </div>
+  );
+}
 
 // Render helpers
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -350,6 +379,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
   const parentNode = parentId ? nodesById.get(parentId) : undefined;
   const childNode = childId ? nodesById.get(childId) : undefined;
   const panelOpen = Boolean(selectedNode || selectedLink);
+  const selectedNodeSubmitted = selectedNode ? isSubmittedNode(selectedNode) : false;
+  const selectedNodeHasTimestampConflict = selectedNode ? hasTimestampConflict(selectedNode) : false;
+  const selectedLinkIsCandidate = selectedLink?.kind === "candidate_match";
 
   const isFocusedLink = useCallback(
     (link: GraphLink) => {
@@ -370,6 +402,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
       const isHovered = selectedNode?.id === node.id || hoveredNode?.id === node.id;
       const related = !focusedNodeIds || focusedNodeIds.has(node.id);
+      const submitted = isSubmittedNode(node);
 
       // Smooth interpolations - rate reduced to 0.08 for buttery soft transitions
       a.hover += ((isHovered ? 1 : 0) - a.hover) * 0.08;
@@ -416,24 +449,39 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
         const x = -CARD_WIDTH / 2;
         const y = -CARD_HEIGHT / 2;
+        const cardRadius = submitted ? 18 : CARD_RADIUS;
 
         const fill = context.createLinearGradient(x, y, x + CARD_WIDTH, y + CARD_HEIGHT);
-        fill.addColorStop(0, a.hover > 0.5 ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)");
-        fill.addColorStop(1, a.hover > 0.5 ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)");
+        fill.addColorStop(
+          0,
+          submitted
+            ? (a.hover > 0.5 ? "rgba(25, 49, 82, 0.98)" : "rgba(17, 35, 62, 0.96)")
+            : (a.hover > 0.5 ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)")
+        );
+        fill.addColorStop(
+          1,
+          submitted
+            ? (a.hover > 0.5 ? "rgba(13, 28, 52, 0.98)" : "rgba(9, 21, 40, 0.96)")
+            : (a.hover > 0.5 ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)")
+        );
         
-        roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+        roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius);
         context.fillStyle = fill;
         context.fill();
         context.shadowBlur = 0;
         context.lineWidth = 0.75 + a.hover * 0.75;
         context.strokeStyle = `rgba(${parseInt(roleColor.slice(1,3),16)}, ${parseInt(roleColor.slice(3,5),16)}, ${parseInt(roleColor.slice(5,7),16)}, ${0.2 + a.hover*0.8})`;
+        context.setLineDash(submitted ? [4, 3] : []);
         context.stroke();
+        context.setLineDash([]);
 
         context.save();
-        roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+        roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius);
         context.clip();
-        context.fillStyle = roleColor;
-        context.fillRect(x, y, 2 + a.hover * 1.5, CARD_HEIGHT);
+        if (!submitted) {
+          context.fillStyle = roleColor;
+          context.fillRect(x, y, 2 + a.hover * 1.5, CARD_HEIGHT);
+        }
         const sheen = context.createLinearGradient(x, y, x + CARD_WIDTH, y);
         sheen.addColorStop(0, `${roleColor}1e`);
         sheen.addColorStop(0.52, "rgba(255,255,255,0.018)");
@@ -449,7 +497,10 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
         context.textAlign = "right";
         context.fillStyle = "rgba(227, 215, 237, 0.48)";
-        context.fillText(formatDate(node.timestamp).toUpperCase(), x + CARD_WIDTH - 12, y + 14);
+        const dateLabel = hasTimestampConflict(node) && !node.timestamp
+          ? "CONFLICTING DATES"
+          : formatDate(node.timestamp).toUpperCase();
+        if (!submitted) context.fillText(dateLabel, x + CARD_WIDTH - 12, y + 14);
 
         context.textAlign = "left";
         context.font = "500 9.5px Geist, ui-sans-serif, system-ui, sans-serif";
@@ -466,7 +517,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         context.fill();
 
         if (a.flash > 0.01) {
-          roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+          roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius);
           context.fillStyle = `rgba(255,255,255, ${a.flash * 0.8})`;
           context.fill();
         }
@@ -489,7 +540,14 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         context.fill();
         return;
       }
-      roundedRect(context, node.x - CARD_WIDTH / 2, node.y - CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS);
+      roundedRect(
+        context,
+        node.x - CARD_WIDTH / 2,
+        node.y - CARD_HEIGHT / 2,
+        CARD_WIDTH,
+        CARD_HEIGHT,
+        isSubmittedNode(node) ? 18 : CARD_RADIUS
+      );
       context.fillStyle = color;
       context.fill();
     },
@@ -527,15 +585,22 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
       (link as any).__anim = a;
 
       const isHovered = link === selectedLink || link === hoveredLink || isFocusedLink(link);
+      const candidateMatch = link.kind === "candidate_match";
       a.hover += ((isHovered ? 1 : 0) - a.hover) * 0.08;
       a.pop += ((animPhase === "complete" ? 1 : 0) - a.pop) * 0.12;
 
-      let strokeColor = `rgba(223, 171, 84, ${0.24 + 0.38 * link.confidence})`;
+      let strokeColor = candidateMatch
+        ? `rgba(125, 211, 252, ${0.18 + 0.28 * link.confidence})`
+        : `rgba(223, 171, 84, ${0.34 + 0.46 * link.confidence})`;
       if (link === selectedLink) strokeColor = SELECTED_EDGE_COLOR;
       else if (focusedNodeIds && !isFocusedLink(link)) strokeColor = "rgba(155, 125, 179, 0.07)";
-      else if (isFocusedLink(link)) strokeColor = `rgba(247, 202, 111, ${0.52 + 0.42 * link.confidence})`;
+      else if (isFocusedLink(link)) {
+        strokeColor = candidateMatch
+          ? `rgba(186, 230, 253, ${0.46 + 0.36 * link.confidence})`
+          : `rgba(247, 202, 111, ${0.58 + 0.38 * link.confidence})`;
+      }
 
-      const baseWidth = 0.8 + 1.35 * link.confidence;
+      const baseWidth = candidateMatch ? 0.55 + 0.7 * link.confidence : 1 + 1.5 * link.confidence;
       const targetWidth = baseWidth * (0.6 + 0.4 * a.pop) + (0.9 + (link === selectedLink ? 1.3 : 0)) * a.hover;
 
       const [p0, p1, p2, p3] = getSplinePoints(
@@ -549,7 +614,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
       context.lineWidth = targetWidth;
       context.strokeStyle = strokeColor;
       context.lineCap = "round";
+      context.setLineDash(candidateMatch ? [5, 5] : []);
       context.stroke();
+      context.setLineDash([]);
 
       if (a.pop > 0.01) {
         context.save();
@@ -557,7 +624,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         const arrowRelPos = 0.92;
         const arrowPoint = getBezierPoint(arrowRelPos, p0, p1, p2, p3);
         const arrowAngle = getBezierAngle(arrowRelPos, p0, p1, p2, p3);
-        const arrowColor = link === selectedLink || isFocusedLink(link) ? "rgba(255, 221, 145, 0.95)" : "rgba(223, 171, 84, 0.58)";
+        const arrowColor = candidateMatch
+          ? (link === selectedLink || isFocusedLink(link) ? "rgba(224, 242, 254, 0.9)" : "rgba(125, 211, 252, 0.48)")
+          : (link === selectedLink || isFocusedLink(link) ? "rgba(255, 221, 145, 0.95)" : "rgba(223, 171, 84, 0.68)");
 
         context.translate(arrowPoint.x, arrowPoint.y);
         context.rotate(arrowAngle);
@@ -573,7 +642,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
         if (a.hover > 0.3) {
           const time = performance.now();
-          context.fillStyle = `rgba(255, 228, 163, ${a.hover})`;
+          context.fillStyle = candidateMatch
+            ? `rgba(186, 230, 253, ${a.hover})`
+            : `rgba(255, 228, 163, ${a.hover})`;
           for (let i = 0; i < 2; i++) {
             const t = ((time * 0.0006) + i / 2) % 1;
             const pt = getBezierPoint(t, p0, p1, p2, p3);
@@ -604,7 +675,11 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
           nodeCanvasObjectMode={() => "replace"}
           nodePointerAreaPaint={paintNodePointerArea}
           onNodeHover={(node) => animPhase === "complete" && setHoveredNode(node ?? null)}
-          linkLabel={(link) => (animPhase === "complete" ? `${percent(link.confidence)} · ${link.type}` : "")}
+          linkLabel={(link) => (
+            animPhase === "complete"
+              ? `${link.kind === "candidate_match" ? "Candidate source match" : "Validated provenance"} · ${percent(link.confidence)}`
+              : ""
+          )}
           linkCanvasObject={paintLink}
           linkCanvasObjectMode={() => "replace"}
           linkPointerAreaPaint={paintLinkPointerArea}
@@ -681,24 +756,43 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
               <button onClick={() => setSelectedNode(null)} className="p-2 bg-white/5 hover:bg-white/20 rounded-full transition-colors"><X size={18} /></button>
             </div>
             <Field label="Title">{displayTitle(selectedNode)}</Field>
-            <Field label="Publisher">{selectedNode.publisher || <span className="text-gray-500">unknown</span>}</Field>
-            <Field label="Source URL"><a href={selectedNode.url} target="_blank" rel="noreferrer noopener" className="text-blue-400 hover:text-blue-300 underline break-all">{selectedNode.url}</a></Field>
+            {selectedNodeSubmitted ? (
+              <Field label="Source"><span className="text-blue-200/80">User-submitted text</span></Field>
+            ) : (
+              <>
+                <Field label="Publisher">{selectedNode.publisher || <span className="text-gray-500">unknown</span>}</Field>
+                <Field label="Source URL"><a href={selectedNode.url} target="_blank" rel="noreferrer noopener" className="text-blue-400 hover:text-blue-300 underline break-all">{selectedNode.url}</a></Field>
+              </>
+            )}
             <Field label="Published">
               <div className="flex items-center">
                 <Clock size={14} className="mr-2 text-gray-500 shrink-0" />
-                <span>{formatTimestamp(selectedNode.timestamp)} <span className="text-gray-500"> (via {selectedNode.timestamp_source}; {selectedNode.timestamp_confidence} conf)</span></span>
+                <span>{selectedNode.timestamp ? formatTimestamp(selectedNode.timestamp) : "Unknown"}</span>
               </div>
-              {selectedNode.earliest_possible && selectedNode.earliest_possible !== selectedNode.timestamp && (
-                <p className="text-xs text-gray-500 mt-1">Earliest possible: {formatTimestamp(selectedNode.earliest_possible)}</p>
+              {(selectedNode.timestamp_source !== "none" || selectedNode.earliest_possible || selectedNodeHasTimestampConflict) && (
+                <details className="group mt-2 text-xs text-gray-500">
+                  <summary className="cursor-pointer list-none text-gray-500 transition-colors hover:text-gray-300">
+                    <span className="group-open:hidden">Technical timestamp details</span>
+                    <span className="hidden group-open:inline">Hide timestamp details</span>
+                  </summary>
+                  <div className="mt-2 space-y-1 border-l border-white/10 pl-3">
+                    <p>Source: {selectedNode.timestamp_source}</p>
+                    <p>Confidence: {selectedNode.timestamp_confidence}</p>
+                    {selectedNode.earliest_possible && selectedNode.earliest_possible !== selectedNode.timestamp && (
+                      <p>Earliest possible: {formatTimestamp(selectedNode.earliest_possible)}</p>
+                    )}
+                    {selectedNodeHasTimestampConflict && <p>{selectedNode.timestamp_conflict}</p>}
+                  </div>
+                </details>
               )}
             </Field>
-            {selectedNode.timestamp_conflict && (
+            {selectedNodeHasTimestampConflict && (
               <div className="bg-amber-500/10 p-4 rounded-xl border border-amber-500/30">
                 <p className="text-xs text-amber-400 uppercase font-semibold mb-2">Timestamp conflict</p>
-                <p className="text-sm text-gray-200">{selectedNode.timestamp_conflict}</p>
+                <p className="text-sm text-gray-200">Conflicting publication-date signals were detected.</p>
               </div>
             )}
-            <Field label="Passage">{selectedNode.passage ? <p className="italic leading-relaxed text-gray-300">{selectedNode.passage}</p> : <span className="text-gray-500">none captured</span>}</Field>
+            <Field label="Matched passage"><Passage value={selectedNode.passage} /></Field>
             <Field label="Fabricated citations"><StringList items={selectedNode.fabricated_citations} empty="none recorded" /></Field>
             <Field label="Mutations"><StringList items={selectedNode.mutations} empty="none recorded" /></Field>
             <Field label="Discovered via"><StringList items={selectedNode.discovered_via} empty="unknown" /></Field>
@@ -727,21 +821,38 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         {selectedLink && (
           <div className="flex flex-col h-full space-y-5">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <h3 className="text-sm font-semibold tracking-wide uppercase flex items-center text-yellow-300">
+              <h3 className={`text-sm font-semibold tracking-wide uppercase flex items-center ${selectedLinkIsCandidate ? "text-sky-300" : "text-yellow-300"}`}>
                 <GitBranch size={18} className="mr-2" />
-                {selectedLink.type === "propagation" ? "Propagation Evidence" : "Similarity Evidence"}
+                {selectedLinkIsCandidate
+                  ? "Candidate Source Match"
+                  : selectedLink.type === "propagation"
+                    ? "Validated Provenance"
+                    : "Validated Similarity"}
               </h3>
               <button onClick={() => setSelectedLink(null)} className="p-2 bg-white/5 hover:bg-white/20 rounded-full transition-colors"><X size={18} /></button>
             </div>
             <div className="space-y-2">
-              <Endpoint id={parentId} node={parentNode} role="Parent" />
+              <Endpoint
+                id={parentId}
+                node={parentNode}
+                role={selectedLinkIsCandidate && parentNode && !isSubmittedNode(parentNode) ? "Candidate source" : "Parent"}
+              />
               <div className="flex justify-center text-gray-600"><ArrowDown size={18} /></div>
-              <Endpoint id={childId} node={childNode} role="Child" />
+              <Endpoint
+                id={childId}
+                node={childNode}
+                role={selectedLinkIsCandidate && childNode && isSubmittedNode(childNode) ? "Submitted claim" : "Child"}
+              />
             </div>
-            <Field label="Confidence">
+            {selectedLinkIsCandidate && (
+              <p className="rounded-xl border border-sky-300/15 bg-sky-300/[0.06] px-4 py-3 text-sm leading-relaxed text-sky-100/75">
+                This edge records a source match to the submitted claim. It does not assert publication-to-publication provenance.
+              </p>
+            )}
+            <Field label={selectedLinkIsCandidate ? "Match strength" : "Confidence"}>
               <div className="space-y-2">
-                <p className="text-2xl font-semibold text-yellow-300">{percent(selectedLink.confidence)}</p>
-                <ConfidenceBar value={selectedLink.confidence} color={EDGE_COLOR} />
+                <p className={`text-2xl font-semibold ${selectedLinkIsCandidate ? "text-sky-300" : "text-yellow-300"}`}>{percent(selectedLink.confidence)}</p>
+                <ConfidenceBar value={selectedLink.confidence} color={selectedLinkIsCandidate ? "#7dd3fc" : EDGE_COLOR} />
               </div>
             </Field>
             <Field label="Basis"><p className="bg-white/5 p-3 rounded-lg border border-white/10 leading-relaxed">{selectedLink.basis}</p></Field>
@@ -781,7 +892,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                 </div>
               </Field>
             </div>
-            <div className="space-y-2 border-t border-white/10 pt-4">
+            {!selectedLinkIsCandidate && <div className="space-y-2 border-t border-white/10 pt-4">
               <p className="text-xs text-gray-500 uppercase tracking-wide">Temporal evidence</p>
               <div className="text-sm text-gray-200 space-y-1">
                 <p><span className="text-gray-500">Parent:</span> {formatDate(selectedLink.temporal.parent_time)}</p>
@@ -790,7 +901,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                 <p><span className="text-gray-500">Ordering:</span> {selectedLink.temporal.ordering}</p>
               </div>
               <p className="text-xs text-gray-500">{ORDERING_NOTE[selectedLink.temporal.ordering] ?? "Ordering evidence is unavailable."}</p>
-            </div>
+            </div>}
             {selectedLink.alternatives.length > 0 && (
               <div className="space-y-2 border-t border-white/10 pt-4">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Alternative parents considered</p>

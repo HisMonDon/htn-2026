@@ -3,13 +3,13 @@
 import React from "react";
 import { ArrowDown, FilterX } from "lucide-react";
 import type { ExcludedCandidate, RejectedEdge } from "@/lib/api";
-import type { GraphNode } from "@/lib/graph";
+import { isSubmittedNode, type GraphNode } from "@/lib/graph";
 import { displayTitle, hostOf, percent } from "@/lib/format";
 import { ConfidenceBar, Drawer, Field, PanelHeader, SourceLink } from "./panel-ui";
 
 export type EvidenceTab = "rejected" | "excluded";
 
-const REJECTED_COLOR = "#94a3b8";
+const REJECTED_COLOR = "#f87171";
 
 /** Endpoint of a rejected relationship: the resolved node when we have it, else the raw id. */
 function Endpoint({ role, id, node }: { role: string; id: string; node: GraphNode | undefined }) {
@@ -21,7 +21,11 @@ function Endpoint({ role, id, node }: { role: string; id: string; node: GraphNod
           <p className="text-sm text-gray-100 leading-snug">{displayTitle(node)}</p>
           {node.publisher && <p className="text-xs text-gray-500">{node.publisher}</p>}
           <div className="mt-1">
-            <SourceLink url={node.url} />
+            {isSubmittedNode(node) ? (
+              <p className="text-xs text-blue-300/75">User-submitted text</p>
+            ) : (
+              <SourceLink url={node.url} />
+            )}
           </div>
         </>
       ) : (
@@ -163,7 +167,9 @@ export default function RejectedEvidencePanel({
                     className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-2"
                   >
                     <p className="text-sm text-gray-100 leading-snug">{heading}</p>
-                    {candidate.url ? (
+                    {node && isSubmittedNode(node) ? (
+                      <p className="text-xs text-blue-300/75">User-submitted text</p>
+                    ) : candidate.url ? (
                       <SourceLink url={candidate.url} />
                     ) : (
                       <p className="text-xs text-gray-500">No URL recorded</p>

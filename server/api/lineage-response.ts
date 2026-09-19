@@ -137,6 +137,14 @@ export function serializeTraversal(result: RecursiveProvenanceTraversal, context
       inspection, claim_mutations: x.claim_mutations, recursed: x.recursed,
     };
   });
+  for (const [index, x] of result.candidate_matches.entries()) {
+    const source = byId.get(x.source_id);
+    edges.push({
+      id: edgeId(x.source_id, x.target_id, "candidate-match", index), source: x.source_id, target: x.target_id,
+      reference_url: source?.url ?? null, status: "candidate",
+      reason: "Candidate source match discovered from submitted text; it is an investigation root, not validated provenance.",
+    });
+  }
   for (const [index, x] of result.rejected_edges.entries()) {
     const source = x.parent_id && byId.has(x.parent_id) ? x.parent_id : result.documents.find((document) => document.url === x.parent_url || document.mirror_urls.includes(x.parent_url))?.id ?? null;
     edges.push({

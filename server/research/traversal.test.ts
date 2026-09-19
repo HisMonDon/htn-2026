@@ -86,6 +86,38 @@ describe("recursive provenance traversal", () => {
     expect(result.terminations.find((entry) => entry.url === c.url)?.reason).toBe("no-proposals");
   });
 
+  it("makes an acquired claim candidate a root and validates only its real recursive relationship", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/claim-root";
+    const candidate = { url: "https://sources.test/candidate", date: "2023-01-02", marker: "Candidate", links: ["https://sources.test/upstream"] };
+    const upstream = { url: "https://sources.test/upstream", date: "2023-01-01", marker: "Upstream" };
+    const submitted = extractDocument({
+      url: submittedUrl,
+      html: `<html><head><title>Submitted text</title></head><body><article><p>${CLAIM}</p></article></body></html>`,
+      fabricated: FABRICATED,
+      claimTerms: [],
+      discoveredVia: "submitted-text",
+    });
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: submitted, claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([candidate, upstream], []),
+        proposer: proposer(new Map([
+          [submittedUrl, [proposed(candidate.url)]],
+          [candidate.url, [proposed(upstream.url)]],
+          [upstream.url, []],
+        ]), providerCalls),
+      },
+    );
+
+    const byUrl = new Map(result.documents.map((document) => [document.url, document.id]));
+    expect(result.candidate_matches).toEqual([{ source_id: byUrl.get(candidate.url), target_id: byUrl.get(submittedUrl) }]);
+    expect(acceptedUrls(result)).toEqual([`${upstream.url}>${candidate.url}`]);
+    expect(providerCalls).toEqual([submittedUrl, candidate.url, upstream.url]);
+    expect(result.terminations).toContainEqual(expect.objectContaining({ url: submittedUrl, reason: "candidate-roots" }));
+  });
+
   it("resolves an incomplete recursive proposal before fetching it", async () => {
     const a = { url: "https://sources.test/a", date: "2023-01-03", marker: "A", links: ["https://sources.test/b"] };
     const b = { url: "https://sources.test/b", date: "2023-01-02", marker: "B" };

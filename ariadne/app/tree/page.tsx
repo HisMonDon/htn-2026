@@ -5,14 +5,17 @@ import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertTriangle, Route } from "lucide-react";
 import { createResearch, type LineageTree } from "@/lib/api";
-import { toGraphData, ROLE_COLOR, ROLE_LABEL, type GraphData, type NodeRole } from "@/lib/graph";
+import { graphLegendItems, toGraphData, type GraphData, type GraphLegendItem } from "@/lib/graph";
 import AriadneBackdrop from "@/components/AriadneBackdrop";
 import styles from "./tree.module.css";
 
-const ROLE_LEGEND = (Object.keys(ROLE_LABEL) as NodeRole[]).map((role) => ({
-  label: ROLE_LABEL[role],
-  color: ROLE_COLOR[role],
-}));
+const LEGEND_MARK_CLASS: Record<GraphLegendItem["mark"], string> = {
+  seed: styles.legendSeed,
+  candidate: styles.legendCandidate,
+  validated: styles.legendValidated,
+  conflict: styles.legendConflict,
+  rejected: styles.legendRejected,
+};
 
 // DYNAMICALLY import the graph to prevent Next.js SSR crashes
 const GraphVisualizer = dynamic(() => import("@/components/GraphVisualizer"), {
@@ -22,7 +25,23 @@ const GraphVisualizer = dynamic(() => import("@/components/GraphVisualizer"), {
 
 type Phase = "idle" | "researching" | "done" | "error";
 
-const MOCK_TREE: LineageTree = {
+type MockNode = Omit<LineageTree["nodes"][number], "source_kind">;
+type MockEdge = Omit<LineageTree["edges"][number], "claim_mutations">;
+type MockTree = Omit<LineageTree, "nodes" | "edges" | "status" | "diagnostics" | "stats"> & {
+  nodes: MockNode[];
+  edges: MockEdge[];
+  stats: {
+    discovery: "browserbase" | "offline-corpus";
+    retrieval: "elastic-hybrid" | "elastic-lexical" | "memory-bm25";
+    queries: string[];
+    failed_queries: string[];
+    fetched: number;
+    candidates: number;
+    pairs_scored: number;
+  };
+};
+
+const MOCK_TREE_INPUT: MockTree = {
   seed: { claim: "New synthetic enzyme breaks down microplastics in under 24 hours.", url: null, fabricated_citations: [] },
   generated_at: new Date().toISOString(),
   root_ids: ["n1"],
@@ -82,7 +101,7 @@ const MOCK_TREE: LineageTree = {
       url: "https://hackernews.example.com/item?id=8888",
       mirror_urls: [], publisher: "Hacker News",
       title: "Rapid degradation of PET microplastics by engineered esterases (nature.com)",
-      timestamp: "2023-11-01T11:45:00Z", timestamp_source: "api", timestamp_confidence: "strong",
+      timestamp: "2023-11-01T11:45:00Z", timestamp_source: "search-result", timestamp_confidence: "strong",
       earliest_possible: null, timestamp_conflict: null,
       passage: "This looks huge for water treatment facilities. The 40C requirement is surprisingly low for this kind of catalytic efficiency.",
       outbound_links: ["https://nature-journal.example.com/enzymes/2023/11"],
@@ -106,7 +125,7 @@ const MOCK_TREE: LineageTree = {
       url: "https://reddit.example.com/r/futurology/comments/abc",
       mirror_urls: [], publisher: "Reddit (r/Futurology)",
       title: "Scientists invent enzyme that destroys microplastics in a day",
-      timestamp: "2023-11-02T15:00:00Z", timestamp_source: "api", timestamp_confidence: "strong",
+      timestamp: "2023-11-02T15:00:00Z", timestamp_source: "search-result", timestamp_confidence: "strong",
       earliest_possible: null, timestamp_conflict: null,
       passage: "Link: TechNews Daily. Wow, if this scales it could clean up the Great Pacific Garbage Patch.",
       outbound_links: ["https://techcrunch.example.com/2023/11/02/microplastic-enzyme"],
@@ -237,6 +256,23 @@ const MOCK_TREE: LineageTree = {
   },
 };
 
+const MOCK_TREE: LineageTree = {
+  ...MOCK_TREE_INPUT,
+  nodes: MOCK_TREE_INPUT.nodes.map((node) => ({ ...node, source_kind: "fetched" })),
+  edges: MOCK_TREE_INPUT.edges.map((edge) => ({ ...edge, claim_mutations: [] })),
+  status: "complete",
+  diagnostics: [],
+  stats: {
+    pipeline: "recursive-provenance",
+    max_depth: 5,
+    sources_expanded: MOCK_TREE_INPUT.stats.candidates,
+    proposals_received: MOCK_TREE_INPUT.stats.pairs_scored,
+    fetched: MOCK_TREE_INPUT.stats.fetched,
+    fetch_failures: 0,
+    analysis_requests: MOCK_TREE_INPUT.stats.candidates,
+  },
+};
+
 function TreeView() {
   const searchParams = useSearchParams();
   const query = searchParams.get("q"); // The claim typed on the landing page
@@ -267,7 +303,7 @@ function TreeView() {
       try {
         const result = await createResearch(query, { signal: controller.signal });
         setResearchId(result.id);
-        setGraphData(toGraphData(result.tree));
+        setGraphData(toGraphData(result.tree, result.edges));
         setPhase("done");
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -318,11 +354,11 @@ function TreeView() {
       </header>
 
       {/* Role legend - provenance roles, not a truth classification. */}
-      {query && phase === "done" && (
+      {query && phase === "done" && graphData && (
         <div className={styles.legend}>
-          {ROLE_LEGEND.map(({ label, color }) => (
+          {graphLegendItems(graphData).map(({ label, mark }) => (
             <span key={label} className="flex items-center gap-2">
-              <span className={styles.legendDot} style={{ backgroundColor: color, color }} />
+              <span className={`${styles.legendMark} ${LEGEND_MARK_CLASS[mark]}`} />
               {label}
             </span>
           ))}

@@ -96,7 +96,7 @@ export const AriadneResponse = z.object({
   edges: z.array(AriadneEdge),
   terminations: z.array(z.object({
     source_id: z.string(), url: z.string(), depth: z.number(),
-    reason: z.enum(["no-proposals", "max-depth", "provider-failure", "all-proposals-rejected", "accepted-parents"]),
+    reason: z.enum(["no-proposals", "max-depth", "provider-failure", "all-proposals-rejected", "accepted-parents", "candidate-roots"]),
     detail: z.string().nullable(),
   })),
   warnings: z.array(AriadneDiagnostic),

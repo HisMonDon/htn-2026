@@ -56,7 +56,9 @@ export type SourceTerminationReason =
   | "max-depth"
   | "provider-failure"
   | "all-proposals-rejected"
-  | "accepted-parents";
+  | "accepted-parents"
+  /** A submitted-text query discovered real documents that now act as traversal roots. */
+  | "candidate-roots";
 
 export type ProposedEdgeTerminationReason =
   | "invalid-proposal"
@@ -112,11 +114,24 @@ export interface AcceptedProposedEdge extends TreeEdge {
   recursed: boolean;
 }
 
+/**
+ * A fetched source proposed for submitted text. This is a discovery relationship, never a
+ * provenance verdict: its source remains eligible for ordinary recursive validation.
+ *
+ * Source -> target retains the graph-wide upstream -> downstream orientation.
+ */
+export interface CandidateMatch {
+  source_id: string;
+  target_id: string;
+}
+
 export interface RecursiveProvenanceTraversal {
   /** Canonical artifacts, including fetched mirrors merged by existing canonicalization. */
   documents: CandidateDocument[];
   /** A DAG: multiple independently validated upstream sources may parent the same document. */
   accepted_edges: AcceptedProposedEdge[];
+  /** Claim-only bootstrap discovery; deliberately excluded from the validated provenance DAG. */
+  candidate_matches: CandidateMatch[];
   /** Provider suggestions that were never accepted, with the exact terminating reason. */
   rejected_edges: RejectedProposedEdge[];
   /** One completion record for every source that was expanded. */
@@ -145,7 +160,7 @@ export interface TraverseProvenanceInput {
   fabricated: string[];
   /** Existing discovered artifacts can be used for canonical/mirror and temporal evidence. */
   documents?: CandidateDocument[];
-  /** Number of accepted upstream hops to expand. The seed is at depth zero. */
+  /** Number of validated upstream hops to expand. Claim-only candidate roots share the seed's depth zero. */
   maxDepth?: number;
   /**
    * Per-call provider budget. Defaults to 10 so a runner can schedule invocations at the
@@ -177,11 +192,17 @@ export interface AcceptedTraversalRecord {
   recursed: boolean;
 }
 
+interface CandidateMatchRecord {
+  sourceKey: string;
+  targetKey: string;
+}
+
 export interface TraversalCheckpoint {
   documents: CandidateDocument[];
   queue: QueuedSource[];
   source_states: Array<[string, "queued" | "expanded"]>;
   accepted: AcceptedTraversalRecord[];
+  candidate_matches: CandidateMatchRecord[];
   rejected_edges: RejectedProposedEdge[];
   terminations: SourceTermination[];
   diagnostics: TraversalDiagnostic[];
@@ -227,6 +248,10 @@ function sourceFromDocuments(key: string, documents: Map<string, CandidateDocume
   const document = documents.get(key);
   if (!document) throw new Error(`unknown traversal source ${key}`);
   return document;
+}
+
+function isSubmittedText(document: CandidateDocument): boolean {
+  return document.discovered_via.includes("submitted-text");
 }
 
 function treeEdge(
@@ -292,6 +317,7 @@ export async function traverseProvenance(
   );
   const queue: QueuedSource[] = checkpoint?.queue.map((source) => ({ ...source })) ?? [{ key: seedKey, depth: 0, job_id: null }];
   const accepted: AcceptedTraversalRecord[] = checkpoint?.accepted.map((edge) => ({ ...edge })) ?? [];
+  const candidateMatches: CandidateMatchRecord[] = checkpoint?.candidate_matches.map((edge) => ({ ...edge })) ?? [];
   const rejected: RejectedProposedEdge[] = checkpoint?.rejected_edges.map((edge) => ({ ...edge })) ?? [];
   const terminations: SourceTermination[] = checkpoint?.terminations.map((entry) => ({ ...entry })) ?? [];
   const diagnostics: TraversalDiagnostic[] = checkpoint?.diagnostics.map((entry) => ({ ...entry })) ?? [];
@@ -417,6 +443,7 @@ export async function traverseProvenance(
     }
 
     let acceptedForSource = 0;
+    let candidateRootsForSource = 0;
     for (const proposal of [...proposals].sort(proposalSort)) {
       const requestedUrl = proposalUrl(proposal);
       const reference = proposalLabel(proposal) || "unidentified upstream source";
@@ -502,6 +529,22 @@ export async function traverseProvenance(
         });
         continue;
       }
+
+      if (isSubmittedText(currentChild)) {
+        if (!candidateMatches.some((edge) => edge.sourceKey === parentKey && edge.targetKey === current.key)) {
+          candidateMatches.push({ sourceKey: parentKey, targetKey: current.key });
+          candidateRootsForSource += 1;
+        }
+        // The proposal and successful acquisition establish an investigation root, not a
+        // provenance edge. It therefore consumes no accepted-hop depth and is expanded under the
+        // ordinary validator path just like an explicit real seed would be.
+        if (!sourceState.has(parentKey)) {
+          sourceState.set(parentKey, "queued");
+          queue.push({ key: parentKey, depth: current.depth, job_id: null });
+        }
+        continue;
+      }
+
       if (createsCycle(parentKey, current.key)) {
         rejected.push({
           parent_url: parent.url,
@@ -563,7 +606,7 @@ export async function traverseProvenance(
       source_id: terminalChild.id,
       url: terminalChild.url,
       depth: current.depth,
-      reason: acceptedForSource > 0 ? "accepted-parents" : "all-proposals-rejected",
+      reason: acceptedForSource > 0 ? "accepted-parents" : candidateRootsForSource > 0 ? "candidate-roots" : "all-proposals-rejected",
       detail: null,
     });
   }
@@ -583,6 +626,7 @@ export async function traverseProvenance(
         queue,
         source_states: [...sourceState.entries()],
         accepted,
+        candidate_matches: candidateMatches,
         rejected_edges: rejected,
         terminations,
         diagnostics,
@@ -599,8 +643,8 @@ export async function traverseProvenance(
   const interrupted = fetchFailures > 0 || terminations.some((entry) => entry.reason === "provider-failure");
   const status: RecursiveProvenanceTraversal["status"] = paused
     ? "paused"
-    : interrupted
-      ? accepted.length > 0
+      : interrupted
+        ? accepted.length > 0 || candidateMatches.length > 0
         ? "partial"
         : "failed"
       : "complete";
@@ -616,6 +660,10 @@ export async function traverseProvenance(
         edge.recursed,
       ),
     ),
+    candidate_matches: candidateMatches.map((edge) => ({
+      source_id: sourceFromDocuments(edge.sourceKey, finalByKey).id,
+      target_id: sourceFromDocuments(edge.targetKey, finalByKey).id,
+    })),
     rejected_edges: rejected,
     terminations,
     pending_jobs: paused ? [paused] : [],

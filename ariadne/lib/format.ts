@@ -37,6 +37,32 @@ export function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+export interface PassagePreview {
+  text: string;
+  truncated: boolean;
+}
+
+/** Keep the inspector scannable while preserving the complete extraction behind disclosure. */
+export function passagePreview(value: string, maxSentences = 4, maxCharacters = 720): PassagePreview {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return { text: "", truncated: false };
+
+  const sentences = (normalized.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g) ?? [normalized])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const selected = sentences.slice(0, Math.max(1, Math.min(5, maxSentences)));
+
+  while (selected.length > 2 && selected.join(" ").length > maxCharacters) selected.pop();
+
+  let text = selected.join(" ");
+  if (text.length > maxCharacters) {
+    const boundary = text.lastIndexOf(" ", maxCharacters);
+    text = `${text.slice(0, boundary > 0 ? boundary : maxCharacters).trimEnd()}…`;
+  }
+
+  return { text, truncated: text !== normalized };
+}
+
 /** Host of a URL for a readable heading. Derived from the URL, not invented metadata. */
 export function hostOf(url: string): string | null {
   try {

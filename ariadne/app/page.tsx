@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Galaxy from "@/components/Galaxy";
 import SpiralGalaxy from "@/components/SpiralGalaxy";
@@ -9,7 +9,17 @@ import styles from "./landing.module.css";
 
 export default function LandingPage() {
   const [message, setMessage] = useState("");
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const transitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    router.prefetch("/tree");
+
+    return () => {
+      if (transitionTimer.current) clearTimeout(transitionTimer.current);
+    };
+  }, [router]);
 
   const galaxyBackground = useMemo(
     () => (
@@ -37,18 +47,32 @@ export default function LandingPage() {
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim()) return;
-    
-    // Transitions to the new UI
-    router.push(`/tree?q=${encodeURIComponent(message)}`);
+    const query = message.trim();
+    if (!query || isTransitioning) return;
+
+    setIsTransitioning(true);
+
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    transitionTimer.current = setTimeout(
+      () => router.push(`/tree?q=${encodeURIComponent(query)}`),
+      prefersReducedMotion ? 240 : 1560
+    );
   };
 
   return (
-    <main className={styles.landing}>
-      {galaxyBackground}
-      <div className={styles.nebula} aria-hidden="true" />
-      <SpiralGalaxy className={styles.spiralGalaxy} />
-      <div className={styles.vignette} aria-hidden="true" />
+    <main
+      className={`${styles.landing} ${isTransitioning ? styles.transitioning : ""}`}
+      aria-busy={isTransitioning}
+    >
+      <div className={styles.scene} aria-hidden="true">
+        {galaxyBackground}
+        <div className={styles.nebula} />
+        <SpiralGalaxy className={styles.spiralGalaxy} />
+        <div className={styles.vignette} />
+      </div>
 
       <div className={styles.content}>
         <header className={styles.header}>
@@ -65,8 +89,11 @@ export default function LandingPage() {
           value={message}
           onValueChange={setMessage}
           onSubmit={handleSend}
+          disabled={isTransitioning}
         />
       </div>
+
+      <div className={styles.whiteout} aria-hidden="true" />
     </main>
   );
 }

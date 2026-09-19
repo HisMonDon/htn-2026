@@ -276,6 +276,69 @@ describe("recursive research HTTP contract", () => {
     expect(analyze).toHaveBeenCalledTimes(2);
   });
 
+  it("uses an acquired claim candidate as a traversal root without validating the discovery relationship", async () => {
+    const analyze = vi.fn(async (document) => {
+      if (document.discovered_via.includes("submitted-text")) return [{ url: b }];
+      return document.url === b ? [{ url: c }] : [];
+    });
+    const api = await start({ proposer: { analyze }, fetcher: new CorpusFetcher(pages) });
+
+    const body = await parsed(await api.post({ claim: shared }));
+    const candidate = body.edges.find((edge) => edge.status === "candidate");
+    const validated = body.edges.filter((edge) => edge.status === "validated");
+
+    expect(candidate).toEqual(expect.objectContaining({
+      status: "candidate",
+      source: expect.any(String),
+      target: body.root.id,
+      reference_url: b,
+      reason: expect.stringContaining("not validated provenance"),
+    }));
+    expect(validated).toHaveLength(1);
+    expect(validated[0]).toMatchObject({ reference_url: c, target: candidate?.source });
+    expect(validated.every((edge) => edge.target !== body.root.id)).toBe(true);
+    expect(analyze.mock.calls.map(([document]) => document.url)).toEqual(expect.arrayContaining([b, c]));
+    expect(body.terminations).toContainEqual(expect.objectContaining({ reason: "candidate-roots", source_id: body.root.id }));
+    expect(body.tree.edges).toHaveLength(1);
+    expect(body.tree.edges[0]).toMatchObject({ parent_id: validated[0]?.source, child_id: candidate?.source });
+  });
+
+  it("recurses from both mocked Cohen candidates while preserving their claim links as discovery only", async () => {
+    const claim = "The motion relies on United States v. Figueroa-Florez, United States v. Ortiz, and United States v. Amato, three Second Circuit decisions that it says granted early termination of supervised release in similar circumstances.";
+    const reason = "https://reason.test/volokh/cohen-bard";
+    const filing = "https://business.cch.test/cohen/order-to-show-cause";
+    const motion = "https://sdny.test/cohen/motion";
+    const cohenPages = [
+      page(reason, "Reason / Volokh: Cohen and Bard", "2023-12-13", "The article discusses the Cohen motion and links to the court filing.", [filing]),
+      page(filing, "SDNY order to show cause", "2023-12-12", "The court filing identifies the three authorities in the motion.", [motion]),
+      page(motion, "Cohen motion", "2023-11-29", "The motion cites the disputed cases."),
+    ];
+    const analyze = vi.fn(async (document) => {
+      if (document.discovered_via.includes("submitted-text")) return [{ url: reason }, { url: filing }];
+      if (document.url === reason) return [{ url: filing }];
+      if (document.url === filing) return [{ url: motion }];
+      return [];
+    });
+    const api = await start({ proposer: { analyze }, fetcher: new CorpusFetcher(cohenPages) });
+
+    const body = await parsed(await api.post({ claim }));
+    const candidates = body.edges.filter((edge) => edge.status === "candidate");
+    const validated = body.edges.filter((edge) => edge.status === "validated");
+
+    expect(candidates.map((edge) => edge.reference_url).sort()).toEqual([filing, reason].sort());
+    expect(validated).toHaveLength(2);
+    expect(validated.every((edge) => edge.target !== body.root.id)).toBe(true);
+    expect(body.nodes.map((node) => node.url)).toEqual(expect.arrayContaining([reason, filing, motion]));
+    expect(analyze.mock.calls.map(([document]) => document.url)).toEqual(expect.arrayContaining([reason, filing, motion]));
+    expect(body.terminations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: reason, reason: "accepted-parents" }),
+      expect.objectContaining({ url: filing, reason: "accepted-parents" }),
+    ]));
+    expect(body.warnings).toEqual([]);
+    expect(body.errors).toEqual([]);
+    expect(body.pending).toEqual([]);
+  });
+
   it("validates requests and keeps execution mode server-owned", async () => {
     const api = await start({ proposer: proposer(), fetcher: new CorpusFetcher(pages) });
     for (const x of [{}, { claim: " " }, { ...request, seed_text: "extra" }, { claim: shared, seed_url: "file:///secret" }, { ...request, max_depth: 11 }, { ...request, max_provider_requests: 11 }, { ...request, proposer: "mock" }, { claim: shared, seed_source: {} }]) {

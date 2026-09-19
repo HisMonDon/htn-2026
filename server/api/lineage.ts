@@ -21,7 +21,7 @@ interface StoredRun {
 
 function failedTraversal(diagnostic: TraversalDiagnostic, maxDepth: number): RecursiveProvenanceTraversal {
   return {
-    documents: [], accepted_edges: [], rejected_edges: [], terminations: [], pending_jobs: [],
+    documents: [], accepted_edges: [], candidate_matches: [], rejected_edges: [], terminations: [], pending_jobs: [],
     diagnostics: [diagnostic], status: "failed", checkpoint: null,
     stats: { max_depth: maxDepth, sources_expanded: 0, proposals_received: 0, fetched: 0, fetch_failures: 0, analysis_requests: 0 },
   };
@@ -85,7 +85,7 @@ export function createLineageController(deps: TraverseProvenanceDeps, mode: "liv
       });
     } catch {
       const diagnostic: TraversalDiagnostic = { stage: "traversal", source: null, category: "stage-failed", message: "", recoverable: false };
-      traversal = previous ? { ...previous.traversal, status: previous.traversal.accepted_edges.length ? "partial" : "failed", checkpoint: null, pending_jobs: [], diagnostics: [...previous.traversal.diagnostics, diagnostic] } : failedTraversal(diagnostic, maxDepth);
+      traversal = previous ? { ...previous.traversal, status: previous.traversal.accepted_edges.length || previous.traversal.candidate_matches.length ? "partial" : "failed", checkpoint: null, pending_jobs: [], diagnostics: [...previous.traversal.diagnostics, diagnostic] } : failedTraversal(diagnostic, maxDepth);
       if (!previous && seed) traversal.documents = [seed];
     }
     const response = serializeTraversal(traversal!, { id, input, seed, execution, generatedAt: now().toISOString() });
