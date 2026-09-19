@@ -1,77 +1,105 @@
 "use client";
 
 import React, { useRef, useCallback, useState } from "react";
-import ForceGraph from "react-force-graph-2d";
-import { X, ExternalLink, AlertTriangle, BrainCircuit } from "lucide-react";
+import ForceGraph, { type ForceGraphMethods } from "react-force-graph-2d";
+import { X, ExternalLink, AlertTriangle, BrainCircuit, Sprout, Clock } from "lucide-react";
+import { ROLE_COLOR, ROLE_LABEL, type GraphData, type GraphLink, type GraphNode } from "@/lib/graph";
 
-export default function GraphVisualizer({ data }: { data: any }) {
-  const fgRef = useRef<any>(null);
-  
-  // State to track the clicked node
-  const [selectedNode, setSelectedNode] = useState<any>(null);
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] as string
+  );
+}
 
-  // Determine node color based on type and GPTZero score
-  const getNodeColor = (node: any) => {
-    if (node.type === "hallucination") return "#ef4444"; // Red for fake claims
-    
-    // Gradient for articles based on AI probability (0 to 1)
-    if (node.aiScore > 0.8) return "#f97316"; // Orange (High AI prob)
-    if (node.aiScore > 0.4) return "#eab308"; // Yellow (Mixed)
-    return "#22c55e"; // Green (Likely Human)
-  };
+function displayTitle(node: GraphNode): string {
+  return node.title.trim() || node.publisher.trim() || node.url;
+}
 
-  const handleNodeClick = useCallback((node: any) => {
-    // Zoom in on the clicked node
-    if (fgRef.current) {
+function formatTimestamp(value: string | null): string {
+  if (!value) return "unknown";
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? value : new Date(parsed).toUTCString();
+}
+
+/** One labelled block in the side panel. */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-500 uppercase mb-1 tracking-wide">{label}</p>
+      <div className="text-sm text-gray-200 break-words">{children}</div>
+    </div>
+  );
+}
+
+function StringList({ items, empty }: { items: string[]; empty: string }) {
+  if (items.length === 0) return <span className="text-gray-500">{empty}</span>;
+  return (
+    <ul className="list-disc list-inside space-y-1">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+export default function GraphVisualizer({ data }: { data: GraphData }) {
+  const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    if (fgRef.current && node.x !== undefined && node.y !== undefined) {
       fgRef.current.centerAt(node.x, node.y, 1000);
       fgRef.current.zoom(8, 2000);
     }
-    
-    // Set the node data to open the side panel
     setSelectedNode(node);
   }, []);
 
-  const handleBackgroundClick = useCallback(() => {
-    // Close the side panel when clicking empty space
-    setSelectedNode(null);
-  }, []);
+  const handleBackgroundClick = useCallback(() => setSelectedNode(null), []);
 
   return (
     <div className="relative w-full h-full">
-      {/* The Graph */}
-      <ForceGraph
+      <ForceGraph<GraphNode, GraphLink>
         ref={fgRef}
         graphData={data}
-        nodeLabel="title"
-        nodeColor={getNodeColor}
+        nodeLabel={(node) => `${escapeHtml(displayTitle(node))}<br/><i>${escapeHtml(node.publisher)}</i>`}
+        nodeColor={(node) => ROLE_COLOR[node.role]}
+        // Roots read as larger even when amber marks a timestamp conflict.
+        nodeVal={(node) => (node.is_root || node.is_seed ? 4 : 1.5)}
         nodeRelSize={1.5}
-        linkColor={() => "rgba(242, 218, 81, 0.4)"}
-        linkWidth={1.5}
+        linkColor={(link) => `rgba(242, 218, 81, ${0.25 + 0.55 * link.confidence})`}
+        linkWidth={(link) => 0.75 + 2 * link.confidence}
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
         backgroundColor="#000000"
+        // Arrow sits at the child end: parent (source) -> child (target).
         linkDirectionalArrowLength={3}
+        linkDirectionalArrowRelPos={1}
       />
 
       {/* The Side Panel */}
-      <div 
+      <div
         className={`absolute top-0 right-0 h-full w-96 bg-black/80 backdrop-blur-xl border-l border-white/10 p-6 text-white transition-transform duration-300 ease-in-out z-50 overflow-y-auto ${
           selectedNode ? "translate-x-0" : "translate-x-full"
         }`}
       >
         {selectedNode && (
-          <div className="flex flex-col h-full space-y-6">
-            
+          <div className="flex flex-col h-full space-y-5">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <h3 className="text-lg font-semibold tracking-wide text-gray-200 uppercase flex items-center">
-                {selectedNode.type === "article" ? (
-                  <><ExternalLink size={18} className="mr-2 text-blue-400" /> Article Details</>
+              <h3
+                className="text-sm font-semibold tracking-wide uppercase flex items-center"
+                style={{ color: ROLE_COLOR[selectedNode.role] }}
+              >
+                {selectedNode.role === "conflict" ? (
+                  <AlertTriangle size={18} className="mr-2" />
+                ) : selectedNode.is_seed || selectedNode.is_root ? (
+                  <Sprout size={18} className="mr-2" />
                 ) : (
-                  <><AlertTriangle size={18} className="mr-2 text-red-500" /> Detected Claim</>
+                  <ExternalLink size={18} className="mr-2" />
                 )}
+                {ROLE_LABEL[selectedNode.role]}
               </h3>
-              <button 
+              <button
                 onClick={() => setSelectedNode(null)}
                 className="p-2 bg-white/5 hover:bg-white/20 rounded-full transition-colors"
               >
@@ -79,60 +107,94 @@ export default function GraphVisualizer({ data }: { data: any }) {
               </button>
             </div>
 
-            {/* Content Based on Node Type */}
-            {selectedNode.type === "article" && (
-              <div className="space-y-6">
-                <div>
-                  <p className="text-sm text-gray-500 uppercase mb-1">Source URL</p>
-                  <a 
-                    href={selectedNode.id} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className="text-blue-400 hover:text-blue-300 underline break-all text-sm"
-                  >
-                    {selectedNode.id}
-                  </a>
-                </div>
+            <Field label="Title">{displayTitle(selectedNode)}</Field>
 
-                <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                  <p className="text-sm text-gray-400 uppercase mb-2 flex items-center">
-                    <BrainCircuit size={16} className="mr-2" /> GPTZero Analysis
-                  </p>
-                  <div className="flex items-end justify-between mb-2">
-                    <span className="text-3xl font-bold" style={{ color: getNodeColor(selectedNode) }}>
-                      {(selectedNode.aiScore * 100).toFixed(1)}%
-                    </span>
-                    <span className="text-sm text-gray-500 mb-1">AI Generated</span>
-                  </div>
-                  
-                  {/* Progress Bar */}
-                  <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full rounded-full transition-all duration-1000"
-                      style={{ 
-                        width: `${selectedNode.aiScore * 100}%`,
-                        backgroundColor: getNodeColor(selectedNode)
-                      }}
-                    />
-                  </div>
-                </div>
+            <Field label="Publisher">{selectedNode.publisher || <span className="text-gray-500">unknown</span>}</Field>
+
+            <Field label="Source URL">
+              <a
+                href={selectedNode.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-400 hover:text-blue-300 underline break-all"
+              >
+                {selectedNode.url}
+              </a>
+            </Field>
+
+            <Field label="Published">
+              <div className="flex items-center">
+                <Clock size={14} className="mr-2 text-gray-500 shrink-0" />
+                <span>
+                  {formatTimestamp(selectedNode.timestamp)}
+                  <span className="text-gray-500"> (via {selectedNode.timestamp_source})</span>
+                </span>
               </div>
-            )}
-
-            {selectedNode.type === "hallucination" && (
-              <div className="space-y-6">
-                <div className="bg-red-500/10 p-4 rounded-xl border border-red-500/30">
-                  <p className="text-sm text-red-400 uppercase font-semibold mb-2">Flagged AI Text</p>
-                  <p className="text-gray-200 leading-relaxed italic text-lg">
-                    "{selectedNode.full_text || selectedNode.title}"
-                  </p>
-                </div>
-                <p className="text-sm text-gray-400">
-                  This exact sentence was heavily flagged by GPTZero as synthetic generation and is acting as a spreader node in this network.
+              {selectedNode.earliest_possible && selectedNode.earliest_possible !== selectedNode.timestamp && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Earliest possible: {formatTimestamp(selectedNode.earliest_possible)}
                 </p>
+              )}
+            </Field>
+
+            {selectedNode.timestamp_conflict && (
+              <div className="bg-amber-500/10 p-4 rounded-xl border border-amber-500/30">
+                <p className="text-xs text-amber-400 uppercase font-semibold mb-2">Timestamp conflict</p>
+                <p className="text-sm text-gray-200">{selectedNode.timestamp_conflict}</p>
               </div>
             )}
 
+            <Field label="Passage">
+              {selectedNode.passage ? (
+                <p className="italic leading-relaxed text-gray-300">{selectedNode.passage}</p>
+              ) : (
+                <span className="text-gray-500">none captured</span>
+              )}
+            </Field>
+
+            <Field label="Fabricated citations">
+              <StringList items={selectedNode.fabricated_citations} empty="none recorded" />
+            </Field>
+
+            <Field label="Mutations">
+              <StringList items={selectedNode.mutations} empty="none recorded" />
+            </Field>
+
+            <Field label="Discovered via">
+              <StringList items={selectedNode.discovered_via} empty="unknown" />
+            </Field>
+
+            <Field label="Seed">{selectedNode.is_seed ? "yes" : "no"}</Field>
+
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+              <p className="text-xs text-gray-400 uppercase mb-2 flex items-center">
+                <BrainCircuit size={16} className="mr-2" /> AI-origin evidence
+              </p>
+              {selectedNode.ai_evidence ? (
+                <div className="space-y-2 text-sm text-gray-200">
+                  <p>
+                    <span className="text-gray-500">Provider:</span> {selectedNode.ai_evidence.provider}
+                  </p>
+                  <p>
+                    <span className="text-gray-500">Label:</span> {selectedNode.ai_evidence.label}
+                  </p>
+                  <p>
+                    <span className="text-gray-500">Reported AI probability:</span>{" "}
+                    {selectedNode.ai_evidence.ai_probability.toFixed(2)}
+                  </p>
+                  <p className="text-xs text-gray-500">Checked {formatTimestamp(selectedNode.ai_evidence.checked_at)}</p>
+                  {selectedNode.ai_evidence.flagged_passages.length > 0 && (
+                    <div className="pt-1">
+                      <p className="text-gray-500 text-xs uppercase mb-1">Flagged passages</p>
+                      <StringList items={selectedNode.ai_evidence.flagged_passages} empty="none" />
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-600 pt-1">Supplementary evidence only; not a verdict on the claim.</p>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">AI-origin evidence: not available</p>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -12,3 +12,4 @@ browserbase-sessions/
 browserbase-replays/
 replays/
 session-recordings/
+.devswarm-temp/
