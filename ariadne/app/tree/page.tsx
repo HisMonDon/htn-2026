@@ -338,7 +338,7 @@ function TreeView() {
         amplitude={0.3}
         frequencyX={3}
         frequencyY={3}
-        interactive
+        interactive={false}
       />
       <div className="absolute inset-0 pointer-events-none bg-black/35" aria-hidden="true" />
 
@@ -428,7 +428,7 @@ export default function TreePage() {
             amplitude={0.3}
             frequencyX={3}
             frequencyY={3}
-            interactive
+            interactive={false}
           />
           <div className="absolute inset-0 pointer-events-none bg-black/35" aria-hidden="true" />
           <div className={styles.stateCard}>

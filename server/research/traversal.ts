@@ -466,7 +466,7 @@ export async function traverseProvenance(
         const priorFailure = failedReferences.get(referenceKey);
         if (priorFailure) {
           rejected.push({
-            parent_url: reference,
+            parent_url: referenceKey,
             parent_id: null,
             child_id: child.id,
             confidence: null,
@@ -486,7 +486,7 @@ export async function traverseProvenance(
           const failure = `${ingested.reason}${ingested.detail ? `: ${ingested.detail}` : ""}`;
           failedReferences.set(referenceKey, failure);
           rejected.push({
-            parent_url: reference,
+            parent_url: referenceKey,
             parent_id: null,
             child_id: child.id,
             confidence: null,

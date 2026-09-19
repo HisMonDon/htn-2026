@@ -203,6 +203,23 @@ describe("recursive research HTTP contract", () => {
     expect(body.errors[0]?.source).toBe(missing);
   });
 
+  it("keeps a failed proposal's URL separate from its bibliographic label", async () => {
+    const api = await start({
+      proposer: {
+        analyze: async (document) => document.url === a
+          ? [{ url: missing, title: "UNITED STATES DISTRICT COURT - Justia News" }]
+          : [],
+      },
+      fetcher: new CorpusFetcher(pages),
+    });
+
+    const body = await parsed(await api.post());
+    const rejected = body.edges.find((edge) => edge.status === "rejected" && edge.termination === "fetch-failure");
+
+    expect(rejected?.reference_url).toBe(missing);
+    expect(body.errors).toContainEqual(expect.objectContaining({ stage: "fetch", source: missing, category: "http-404" }));
+  });
+
   it("retains specific PDF extraction failure categories", async () => {
     const api = await start({
       proposer: proposer(),

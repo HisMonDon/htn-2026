@@ -30,6 +30,16 @@ function seed(page: Page): CandidateDocument {
   });
 }
 
+function submittedSeed(url: string): CandidateDocument {
+  return extractDocument({
+    url,
+    html: `<html><head><title>Submitted text</title></head><body><article><p>${CLAIM}</p></article></body></html>`,
+    fabricated: FABRICATED,
+    claimTerms: [],
+    discoveredVia: "submitted-text",
+  });
+}
+
 function fetcher(pages: Page[], calls: string[]): PageFetcher {
   const byUrl = new Map(pages.map((page) => [canonicalUrl(page.url), page]));
   return {
@@ -90,13 +100,7 @@ describe("recursive provenance traversal", () => {
     const submittedUrl = "https://submitted.ariadne.invalid/claim-root";
     const candidate = { url: "https://sources.test/candidate", date: "2023-01-02", marker: "Candidate", links: ["https://sources.test/upstream"] };
     const upstream = { url: "https://sources.test/upstream", date: "2023-01-01", marker: "Upstream" };
-    const submitted = extractDocument({
-      url: submittedUrl,
-      html: `<html><head><title>Submitted text</title></head><body><article><p>${CLAIM}</p></article></body></html>`,
-      fabricated: FABRICATED,
-      claimTerms: [],
-      discoveredVia: "submitted-text",
-    });
+    const submitted = submittedSeed(submittedUrl);
     const providerCalls: string[] = [];
 
     const result = await traverseProvenance(
@@ -116,6 +120,87 @@ describe("recursive provenance traversal", () => {
     expect(acceptedUrls(result)).toEqual([`${upstream.url}>${candidate.url}`]);
     expect(providerCalls).toEqual([submittedUrl, candidate.url, upstream.url]);
     expect(result.terminations).toContainEqual(expect.objectContaining({ url: submittedUrl, reason: "candidate-roots" }));
+  });
+
+  it("does not promote a claim candidate when acquisition fails", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/fetch-failure";
+    const missing = "https://sources.test/missing-candidate";
+    const providerCalls: string[] = [];
+    const fetchCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: submittedSeed(submittedUrl), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([], fetchCalls),
+        proposer: proposer(new Map([[submittedUrl, [proposed(missing)]]]), providerCalls),
+      },
+    );
+
+    expect(result.candidate_matches).toEqual([]);
+    expect(result.documents.map((document) => document.url)).toEqual([submittedUrl]);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: missing, termination: "fetch-failure" }));
+    expect(providerCalls).toEqual([submittedUrl]);
+    expect(fetchCalls).toEqual([missing]);
+  });
+
+  it("fetches and expands a duplicate claim candidate only once", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/duplicate-candidate";
+    const candidate = { url: "https://sources.test/duplicate-candidate", date: "2023-01-02", marker: "Candidate" };
+    const providerCalls: string[] = [];
+    const fetchCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: submittedSeed(submittedUrl), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([candidate], fetchCalls),
+        proposer: proposer(new Map([
+          [submittedUrl, [proposed(candidate.url), proposed(candidate.url)]],
+          [candidate.url, []],
+        ]), providerCalls),
+      },
+    );
+
+    expect(result.candidate_matches).toHaveLength(1);
+    expect(result.documents.map((document) => document.url).sort()).toEqual([submittedUrl, candidate.url].sort());
+    expect(providerCalls).toEqual([submittedUrl, candidate.url]);
+    expect(fetchCalls).toEqual([candidate.url]);
+  });
+
+  it("preserves provider-budget pauses and validated-hop depth for promoted claim candidates", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/limited-candidate";
+    const candidate = { url: "https://sources.test/limited-candidate", date: "2023-01-02", marker: "Candidate", links: ["https://sources.test/upstream-limit"] };
+    const upstream = { url: "https://sources.test/upstream-limit", date: "2023-01-01", marker: "Upstream" };
+    const providerCalls: string[] = [];
+    const fetchCalls: string[] = [];
+    const sourceFetcher = fetcher([candidate, upstream], fetchCalls);
+    const sourceProposer = proposer(new Map([
+      [submittedUrl, [proposed(candidate.url)]],
+      [candidate.url, [proposed(upstream.url)]],
+      [upstream.url, []],
+    ]), providerCalls);
+    const input = {
+      seed: submittedSeed(submittedUrl),
+      claim: CLAIM,
+      fabricated: FABRICATED,
+      maxDepth: 1,
+      maxProviderRequests: 1,
+    };
+
+    const paused = await traverseProvenance(input, { fetcher: sourceFetcher, proposer: sourceProposer });
+    expect(paused.status).toBe("paused");
+    expect(paused.candidate_matches).toHaveLength(1);
+    expect(paused.pending_jobs).toEqual([expect.objectContaining({ url: candidate.url, reason: "rate-limit", depth: 0 })]);
+    expect(providerCalls).toEqual([submittedUrl]);
+
+    const resumed = await traverseProvenance(
+      { ...input, checkpoint: paused.checkpoint },
+      { fetcher: sourceFetcher, proposer: sourceProposer },
+    );
+
+    expect(acceptedUrls(resumed)).toEqual([`${upstream.url}>${candidate.url}`]);
+    expect(providerCalls).toEqual([submittedUrl, candidate.url]);
+    expect(fetchCalls).toEqual([candidate.url, upstream.url]);
+    expect(resumed.terminations).toContainEqual(expect.objectContaining({ url: upstream.url, reason: "max-depth", depth: 1 }));
   });
 
   it("resolves an incomplete recursive proposal before fetching it", async () => {
