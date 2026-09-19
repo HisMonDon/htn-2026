@@ -2,7 +2,7 @@
  * Reconstruct a lineage tree from a claim and print it.
  *
  *   USE_MOCKS=true npm run research               offline corpus (synthetic .test pages)
- *   npm run research                              live: Browserbase Search + Fetch
+ *   npm run research                              live: direct HTTP fetch (resolver supplied by the host if needed)
  *   npm run research -- --claim "..." [--seed-url URL] [--cite "A v. B" --cite ...] [--json]
  *
  * Defaults to the falsehood claim of the Cohen/Bard seed case. Only the claim is used; the seed

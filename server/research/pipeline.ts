@@ -4,12 +4,14 @@ import { LineageTree } from "../../shared/tree";
 import type { AiWritingDetector } from "../gptzero/client";
 import type { CandidateIndex } from "./candidate-index";
 import { discover, type DiscoveryOptions } from "./discovery";
-import type { PageFetcher, SearchProvider } from "./providers";
+import type { PageFetcher, SearchProvider, SourceReference, SourceResolver } from "./providers";
 import { buildTree } from "./tree";
 
 export interface ResearchInput {
   claim: string;
   seed_url?: string | null;
+  /** Source proposed by an upstream model. A usable URL is fetched before any resolution. */
+  seed_source?: SourceReference | null;
   fabricated_citations?: string[];
   /** Run the AI-writing detector on each lineage node. Never affects edges. */
   include_ai_evidence?: boolean;
@@ -18,6 +20,8 @@ export interface ResearchInput {
 export interface ResearchDeps {
   search: SearchProvider;
   fetcher: PageFetcher;
+  /** Optional resolver, used only when the proposed source cannot be directly fetched. */
+  resolver?: SourceResolver;
   index: CandidateIndex;
   detector?: AiWritingDetector;
   discovery?: DiscoveryOptions;
@@ -27,8 +31,13 @@ export interface ResearchDeps {
 /** Claim in, reconstructed tree out: discover -> extract -> index/retrieve -> score -> assemble. */
 export async function runResearch(input: ResearchInput, deps: ResearchDeps): Promise<LineageTree> {
   const discovered = await discover(
-    { claim: input.claim, seedUrl: input.seed_url ?? null, fabricated: input.fabricated_citations },
-    { search: deps.search, fetcher: deps.fetcher },
+    {
+      claim: input.claim,
+      seedUrl: input.seed_url ?? null,
+      seedSource: input.seed_source ?? null,
+      fabricated: input.fabricated_citations,
+    },
+    { search: deps.search, fetcher: deps.fetcher, resolver: deps.resolver },
     deps.discovery,
   );
   if (discovered.fabricated.length === 0) {
@@ -57,7 +66,8 @@ export async function runResearch(input: ResearchInput, deps: ResearchDeps): Pro
     index: deps.index,
     aiEvidence,
     stats: {
-      discovery: deps.search.kind,
+      discovery:
+        deps.search.kind === "browserbase" || deps.search.kind === "offline-corpus" ? deps.search.kind : "unconfigured",
       queries: discovered.queries,
       failed_queries: discovered.failedQueries,
       extraction_failures: discovered.extractionFailures,

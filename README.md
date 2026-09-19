@@ -45,10 +45,10 @@ npm run research # reconstruct a provenance tree from a claim (USE_MOCKS=true: o
 Given a claim (and optionally a seed URL), Lineage discovers candidate pages, extracts structured evidence, retrieves candidate parent/child pairs, scores every pair deterministically, and assembles the most defensible short tree. It is never handed the known chain.
 
 ```
-discover (search + links + phrase search) -> extract -> index/retrieve pairs -> score edges -> assemble tree
+discover (direct source fetch -> optional resolution -> links) -> extract -> index/retrieve pairs -> score edges -> assemble tree
 ```
 
-- **Discovery:** Browserbase Search and Fetch live, or the synthetic offline corpus in `data/research-corpus.ts` (reserved `.test` domains, with decoys) under `USE_MOCKS=true`.
+- **Discovery:** An upstream source URL is fetched directly over HTTP (with redirects, HTML/PDF detection, and a timeout). A provider-agnostic resolver may be injected for incomplete or dead citations. Research acquisition and resolution do not use Browserbase. The synthetic offline corpus in `data/research-corpus.ts` remains available under `USE_MOCKS=true`.
 - **Evidence per page:** URL, publisher, timestamp and where it came from, relevant passage, outbound links, fabricated citations and spelling variants, optional GPTZero result.
 - **Retrieval:** Elastic hybrid (RRF over lexical, `semantic_text` and a shared-citation keyword match) when `ELASTIC_URL` or `ELASTIC_CLOUD_ID` is set, otherwise in-memory BM25. Retrieval only proposes pairs.
 - **Scoring** (`server/research/edges.ts`):
@@ -86,7 +86,7 @@ Then set `CONTROLLED_TARGET_URL` to the tunnel URL and `BROWSERBASE_API_KEY` in 
 | POST | `/api/cases/:id/nodes/:nodeId/ai-check` | GPTZero evidence on one chain node |
 | POST | `/api/cases/:id/reset` | restore the seed |
 | POST | `/api/provenance/score` | `{ target, candidates, known_mutations? }` |
-| POST | `/api/research` | `{ claim, seed_url?, fabricated_citations?, include_ai_evidence? }` -> `{ id, tree }` |
+| POST | `/api/research` | `{ claim, seed_url?, seed_source?, fabricated_citations?, include_ai_evidence? }` -> `{ id, tree }` |
 | GET | `/api/research/:id` | a previously built tree |
 
 ## Layout

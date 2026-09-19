@@ -1,19 +1,20 @@
 import { assembleDocument, canonicalUrl, parseHtmlPage, type CandidateDocument, type ParsedDocument } from "./extract";
 import { canonicalizeDocuments } from "./canonicalize";
 import { extractPdfPages, parsePdfDocument } from "./pdf";
-import type { PageFetcher, SearchProvider } from "./providers";
+import { fetchSource, type FetchedPage, type PageFetcher, type SearchProvider, type SourceReference, type SourceResolver } from "./providers";
 import { canonicalText, extractCaseNames, matchKey, tokens } from "./text";
 
 /**
- * Candidate discovery. Starts from a claim (and optionally a seed page), searches for the
- * fabricated citations and the claim's wording, follows outbound links from relevant pages, then
- * searches again for distinctive sentences to find copies. Nothing about any particular incident
- * is built in.
+ * Candidate discovery starts from an upstream source proposal whenever one exists. A valid URL is
+ * fetched directly; source resolution is only a fallback for an incomplete or unusable proposal.
+ * Legacy claim-only calls retain the query path because they have no source to fetch.
  */
 
 export interface DiscoveryInput {
   claim: string;
   seedUrl?: string | null;
+  /** Rich upstream proposal; takes precedence over the legacy URL-only seed. */
+  seedSource?: SourceReference | null;
   /** Known fabricated citations. Derived from the claim (and seed page) when omitted. */
   fabricated?: string[];
 }
@@ -48,7 +49,7 @@ export function claimTerms(claim: string, fabricated: string[]): string[] {
   return [...new Set(tokens(rest).filter((word) => word.length > 3 && !STOPWORDS.has(word)))].slice(0, 8);
 }
 
-/** Search APIs cap query length (Browserbase Search: 200 characters). Trim phrases at a word boundary. */
+/** Search APIs commonly cap query length. Trim phrases at a word boundary. */
 export const MAX_QUERY_LENGTH = 200;
 export function fitQuery(query: string): string {
   if (query.length <= MAX_QUERY_LENGTH) return query;
@@ -83,7 +84,7 @@ function fingerprintSentences(doc: CandidateDocument, fabricated: string[]): str
 
 export async function discover(
   input: DiscoveryInput,
-  providers: { search: SearchProvider; fetcher: PageFetcher },
+  providers: { search: SearchProvider; fetcher: PageFetcher; resolver?: SourceResolver },
   options: DiscoveryOptions = {},
 ): Promise<DiscoveryResult> {
   const maxDocuments = options.maxDocuments ?? 30;
@@ -103,17 +104,15 @@ export async function discover(
   // Cached per document so the final re-extraction pass (below) never re-downloads or re-parses.
   const pages = new Map<string, { parsed: ParsedDocument; via: string }>();
 
-  async function visit(url: string, via: string, published: string | null): Promise<CandidateDocument | null> {
-    const key = canonicalUrl(url);
+  async function visitFetched(page: FetchedPage, via: string, published: string | null): Promise<CandidateDocument | null> {
+    const key = canonicalUrl(page.url);
     const existing = documents.get(key);
     if (existing) {
       if (!existing.discovered_via.includes(via)) existing.discovered_via.push(via);
       return null;
     }
-    if (attempted.has(key) || documents.size >= maxDocuments) return null;
+    if (documents.size >= maxDocuments) return null;
     attempted.add(key);
-    const page = await providers.fetcher.fetch(url);
-    if (!page) return null;
     fetched += 1;
 
     let parsed: ParsedDocument;
@@ -138,15 +137,35 @@ export async function discover(
     return doc;
   }
 
+  async function visit(url: string, via: string, published: string | null): Promise<CandidateDocument | null> {
+    const key = canonicalUrl(url);
+    const existing = documents.get(key);
+    if (existing) {
+      if (!existing.discovered_via.includes(via)) existing.discovered_via.push(via);
+      return null;
+    }
+    if (attempted.has(key) || documents.size >= maxDocuments) return null;
+    attempted.add(key);
+    const page = await providers.fetcher.fetch(url);
+    return page ? visitFetched(page, via, published) : null;
+  }
+
   let seedUrl: string | null = null;
-  if (input.seedUrl) {
-    const seed = await visit(input.seedUrl, "seed", null);
-    if (seed) {
-      seedUrl = seed.url;
-      if (fabricated.length === 0) fabricated = seed.case_names;
+  const source = input.seedSource ?? (input.seedUrl ? { url: input.seedUrl } : null);
+  if (source) {
+    const fetchedSource = await fetchSource(source, { fetcher: providers.fetcher, resolver: providers.resolver });
+    if (fetchedSource) {
+      const seed = await visitFetched(fetchedSource.page, fetchedSource.resolved ? "resolved source" : "seed", null);
+      if (seed) {
+        seedUrl = seed.url;
+        if (fabricated.length === 0) fabricated = seed.case_names;
+      }
     }
   }
 
+  // A search provider is a claim-only fallback. When an upstream source was supplied, it has
+  // already been fetched directly and (only if needed) resolved exactly once above.
+  const useSearchDiscovery = !source;
   const terms = claimTerms(input.claim, fabricated);
   const firstRound = [
     ...fabricated.map((citation) => `"${citation}"`),
@@ -169,7 +188,9 @@ export async function discover(
     for (const hit of hits) await visit(hit.url, `search: ${query}`, hit.published);
   }
 
-  for (const query of firstRound) await runQuery(query);
+  if (useSearchDiscovery) {
+    for (const query of firstRound) await runQuery(query);
+  }
 
   // Follow outbound links from pages that repeat a fabricated citation.
   const isRelevant = (doc: CandidateDocument) => doc.fabricated_citations.length > 0;
@@ -186,16 +207,18 @@ export async function discover(
   }
 
   // Search for distinctive sentences to find copies that neither cite nor link.
-  const counts = new Map<string, number>();
-  const relevant = [...documents.values()].filter(isRelevant);
-  for (const doc of relevant) {
-    for (const sentence of new Set(fingerprintSentences(doc, fabricated).map(matchKey))) counts.set(sentence, (counts.get(sentence) ?? 0) + 1);
+  if (useSearchDiscovery) {
+    const counts = new Map<string, number>();
+    const relevant = [...documents.values()].filter(isRelevant);
+    for (const doc of relevant) {
+      for (const sentence of new Set(fingerprintSentences(doc, fabricated).map(matchKey))) counts.set(sentence, (counts.get(sentence) ?? 0) + 1);
+    }
+    const phrases = [...counts.entries()]
+      .sort((a, b) => a[1] - b[1] || b[0].length - a[0].length || a[0].localeCompare(b[0]))
+      .map(([sentence]) => sentence)
+      .slice(0, maxPhraseQueries);
+    for (const phrase of phrases) await runQuery(`"${phrase}"`);
   }
-  const phrases = [...counts.entries()]
-    .sort((a, b) => a[1] - b[1] || b[0].length - a[0].length || a[0].localeCompare(b[0]))
-    .map(([sentence]) => sentence)
-    .slice(0, maxPhraseQueries);
-  for (const phrase of phrases) await runQuery(`"${phrase}"`);
 
   // Re-assemble with the final citation list so every page is judged by the same criteria. The
   // cached ParsedDocument means this never re-downloads or re-parses a PDF or HTML page.

@@ -38,6 +38,16 @@ const ResearchBody = z
   .object({
     claim: z.string().min(1).max(2000),
     seed_url: z.url().optional(),
+    seed_source: z
+      .object({
+        url: z.url().optional().nullable(),
+        title: z.string().min(1).max(1000).optional().nullable(),
+        citation: z.string().min(1).max(2000).optional().nullable(),
+        author: z.string().min(1).max(500).optional().nullable(),
+      })
+      .strict()
+      .optional()
+      .nullable(),
     fabricated_citations: z.array(z.string().min(1)).max(20).optional(),
     include_ai_evidence: z.boolean().optional(),
   })

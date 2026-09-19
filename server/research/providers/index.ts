@@ -3,10 +3,11 @@
  * fetches one. `discover()` (../discovery.ts) and `runResearch()` (../pipeline.ts) depend only on
  * these interfaces, never on a concrete provider.
  *
- * To add a replacement search provider: create a sibling file implementing both interfaces (see
- * browserbase.ts for the shape), then point ../factory.ts at it. No other file in the pipeline needs
- * to change.
+ * To add a replacement fallback resolver, create a sibling provider implementing `SourceResolver`
+ * (or adapt a `SearchProvider` with `SearchSourceResolver`) and point ../factory.ts at it. No
+ * extraction, canonicalization, or graph code needs to change.
  */
-export type { FetchedPage, PageFetcher, SearchHit, SearchProvider } from "./types";
-export { BrowserbaseSearch, BrowserbaseFetcher, browserbaseProviders } from "./browserbase";
+export type { FetchedPage, PageFetcher, SearchHit, SearchProvider, SourceReference, SourceResolver } from "./types";
 export { CorpusSearch, CorpusFetcher } from "./corpus";
+export { DirectHttpFetcher, type DirectHttpFetcherOptions } from "./http";
+export { fetchSource, SearchSourceResolver, sourceLookupQuery, type FetchSourceOptions, type FetchedSource } from "./resolver";

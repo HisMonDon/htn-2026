@@ -108,7 +108,8 @@ export const LineageTree = z
     rejected_edges: z.array(RejectedEdge),
     excluded: z.array(ExcludedCandidate),
     stats: z.object({
-      discovery: z.enum(["browserbase", "offline-corpus"]),
+      /** The configured fallback-search provider; direct source fetching has no credential dependency. */
+      discovery: z.enum(["browserbase", "offline-corpus", "unconfigured"]),
       retrieval: z.enum(["elastic-hybrid", "elastic-lexical", "memory-bm25"]),
       queries: z.array(z.string()),
       failed_queries: z.array(z.string()),

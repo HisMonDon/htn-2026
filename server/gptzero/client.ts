@@ -65,6 +65,9 @@ const PredictResponse = z.object({
     .min(1),
 });
 
+/** One document entry from a GPTZero predict response, kept around (post-validation) for callers that need more than the mapped {@link AiEvidence}, e.g. the provenance proposer's per-sentence probabilities. */
+export type GptZeroDocument = z.infer<typeof PredictResponse>["documents"][number];
+
 export class GptZeroClient implements AiWritingDetector {
   readonly kind = "gptzero" as const;
   static readonly endpoint = "https://api.gptzero.me/v2/predict/text";
@@ -76,6 +79,12 @@ export class GptZeroClient implements AiWritingDetector {
   ) {}
 
   async detect(text: string): Promise<AiEvidenceValue> {
+    const { evidence } = await this.detectWithRaw(text);
+    return evidence;
+  }
+
+  /** Same as {@link detect}, but also returns the raw (validated, unmapped) provider document for debugging and for adapters, e.g. {@link proposeProvenance}, that need fields `AiEvidence` does not carry. */
+  async detectWithRaw(text: string): Promise<{ evidence: AiEvidenceValue; raw: GptZeroDocument }> {
     const response = await this.fetchImpl(GptZeroClient.endpoint, {
       method: "POST",
       headers: {
@@ -93,7 +102,7 @@ export class GptZeroClient implements AiWritingDetector {
     const probability = doc.class_probabilities?.ai ?? doc.completely_generated_prob;
     if (probability === undefined) throw new Error("GPTZero response had no AI probability");
     const clamped = Math.min(1, Math.max(0, probability));
-    return AiEvidence.parse({
+    const evidence = AiEvidence.parse({
       provider: "gptzero",
       ai_probability: clamped,
       label: doc.predicted_class ?? labelFor(clamped),
@@ -102,6 +111,7 @@ export class GptZeroClient implements AiWritingDetector {
         .filter((sentence) => sentence.highlight_sentence_for_ai && sentence.sentence)
         .map((sentence) => sentence.sentence!),
     });
+    return { evidence, raw: doc };
   }
 }
 
