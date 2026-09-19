@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+.DS_Store
+*.log
+*.tsbuildinfo
+.browserbase/
+browserbase-sessions/
+browserbase-replays/
+replays/
+session-recordings/
