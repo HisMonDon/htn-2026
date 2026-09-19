@@ -1,69 +1,86 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+import React, { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { Send } from "lucide-react";
+import Galaxy from "@/components/Galaxy"; // Your React Bits component
+
+export default function LandingPage() {
+  const [message, setMessage] = useState("");
+  const router = useRouter();
+
+  const galaxyBackground = useMemo(
+    () => (
+      <div className="absolute inset-0 z-0 bg-black pointer-events-auto">
+        <Galaxy
+          starSpeed={0.5}
+          density={1.5}
+          glowIntensity={0.4}
+          mouseInteraction={true}
+          transparent={true}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+      </div>
+    ),
+    []
+  );
+
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!message.trim()) return;
+    
+    // Transitions to the new UI
+    router.push(`/tree?q=${encodeURIComponent(message)}`);
+  };
+
+  return (
+    <main className="relative w-full h-screen overflow-hidden bg-black text-white font-sans">
+      
+      {/* Layer 1: The memoized interactive galaxy background */}
+      {galaxyBackground}
+
+      {/* Layer 2: UI Elements */}
+      <div className="relative z-10 flex flex-col items-center justify-center w-full h-full px-4 pointer-events-none">
+        
+        {/* Title Elements */}
+        <div className="flex flex-col items-center mb-10 space-y-4">
+          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-center bg-clip-text text-transparent bg-gradient-to-b from-white via-white to-gray-500 drop-shadow-2xl">
+            Ariadne: Insert Subtitle
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          
+          <p className="text-lg md:text-xl text-gray-400 text-center max-w-lg mt-4">
+            Insert Description
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        {/* Chat Input Elements */}
+        <div className="w-full max-w-2xl pointer-events-auto">
+          <form
+            onSubmit={handleSend}
+            className="relative flex items-center w-full p-2 bg-white/5 backdrop-blur-xl border border-white/20 rounded-full shadow-2xl transition-all duration-300 focus-within:bg-white/10 focus-within:border-white/40 hover:bg-white/10 box-border"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+            <input
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Insert Placeholder"
+              autoComplete="off"
+              spellCheck="false"
+              className="flex-1 px-6 py-4 bg-transparent text-white placeholder-gray-400 focus:outline-none focus:ring-0 text-lg"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <button
+              type="submit"
+              disabled={!message.trim()}
+              className="p-4 rounded-full bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg flex items-center justify-center group"
+            >
+              <Send 
+                size={22} 
+                className="ml-1 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" 
+              />
+            </button>
+          </form>
         </div>
-      </main>
-    </div>
+
+      </div>
+    </main>
   );
 }
