@@ -249,25 +249,25 @@ const configuredEdges: { edge: LineageTreeEdge }[] = [
   },
   {
     edge: demoEdge(
-      "benchmark-model-power-system-2020", "mosek-optimizer-api-2019",
+      "tube-mppi-covariance-steering-2022", "mosek-optimizer-api-2019",
       "The benchmark-model paper cites this as the optimizer used for its own control formulation.",
     ),
   },
   {
     edge: demoEdge(
-      "benchmark-model-power-system-2020", "irena-renewable-energy-prospects-2018",
+      "voltage-source-converters-inertia-2020", "irena-renewable-energy-prospects-2018",
       "The benchmark-model paper cites this for European renewable-energy deployment context.",
     ),
   },
   {
     edge: demoEdge(
-      "benchmark-model-power-system-2020", "aemo-black-system-report-2016",
+      "voltage-source-converters-inertia-2020", "aemo-black-system-report-2016",
       "The benchmark-model paper cites this for the 2016 South Australia black-system event.",
     ),
   },
   {
     edge: demoEdge(
-      "benchmark-model-power-system-2020", "westinghouse-frequency-oscillations-1982",
+      "voltage-source-converters-inertia-2020", "westinghouse-frequency-oscillations-1982",
       "The benchmark-model paper cites this for low-frequency oscillation analysis methodology.",
     ),
   },
