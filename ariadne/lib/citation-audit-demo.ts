@@ -4,8 +4,8 @@
  * checks whether a paper's own reference list actually points at real, matching sources — the
  * "citation" provenance status (see ProvenanceStatus in lib/graph.ts) exists precisely for this:
  * edges recovered from a citation graph rather than scored by Ariadne's own text-similarity work.
- * Review verdicts per citation are carried in each node's `fabricated_citations` list, the one
- * existing field meant for exactly this ("this citation looks fabricated/incorrect"), so they
+ * Review verdicts per citation are authored below as `reasons` and mapped onto the node's
+ * existing `fabricated_citations` field ("this citation looks fabricated/incorrect"), so they
  * surface in the node drawer GraphVisualizer already renders — no new UI needed.
  */
 import type { BackendEdge, LineageTree, LineageTreeEdge, LineageTreeNode } from "./api";
@@ -24,23 +24,18 @@ export function isCitationAuditDemoQuery(value: string): boolean {
 
 type DemoNodeOptions = Pick<
   LineageTreeNode,
-  | "id"
-  | "url"
-  | "publisher"
-  | "title"
-  | "timestamp"
-  | "passage"
-  | "outbound_links"
-  | "fabricated_citations"
-  | "is_seed"
+  "id" | "url" | "publisher" | "title" | "timestamp" | "passage" | "outbound_links" | "is_seed"
 > & {
   sourceKind?: LineageTreeNode["source_kind"];
+  /** Review verdicts for this citation, mapped onto the node's `fabricated_citations` field. */
+  reasons: string[];
 };
 
 function demoNode(index: number, options: DemoNodeOptions): LineageTreeNode {
-  const { sourceKind, ...node } = options;
+  const { sourceKind, reasons, ...node } = options;
   return {
     ...node,
+    fabricated_citations: reasons,
     mutations: [],
     canonical_id: node.id,
     content_fingerprint: index.toString(16).padStart(64, "0"),
@@ -103,27 +98,27 @@ const REVIEWER = "GPT ZERO:";
 const nodes: LineageTreeNode[] = [
   demoNode(1, {
     id: "memory-augmented-potential-field-theory",
-    url: "https://demo.ariadne.invalid/citation-audit/memory-augmented-potential-field-theory",
+    url: "https://ariadne/citation-audit/memory-augmented-potential-field-theory",
     publisher: "User submission",
     title: "Memory-Augmented Potential Field Theory: A Framework for Adaptive Control in Non-Convex Domains",
     timestamp: null,
     passage: "The paper under audit. Its reference list is checked against real citation-graph lookups, not against Ariadne's own text-similarity scoring.",
     outbound_links: [],
-    fabricated_citations: [],
+    reasons: [],
     is_seed: true,
     sourceKind: "submitted",
   }),
   demoNode(2, {
     id: "deep-koopman-operator-2020",
     // No real match: no paper by these authors exists in Chaos or anywhere else searched.
-    url: "https://demo.ariadne.invalid/citation-audit/deep-koopman-operator-2020",
+    url: "https://ariadne/citation-audit/deep-koopman-operator-2020",
     publisher: "Chaos: An Interdisciplinary Journal of Nonlinear Science",
     title:
       "Mingliang Han, Bingni W Wei, Phelan Senatus, Jörg D Winkel, Mason Youngblood, I-Han Lee, and David J Mandell. Deep koopman operator: A model-free approach to nonlinear dynamical systems. Chaos: An Interdisciplinary Journal of Nonlinear Science, 30(12):123135, 2020.",
     timestamp: "2020-12-01T00:00:00Z",
     passage: "Cited as prior work on model-free operator-theoretic approaches to nonlinear dynamics.",
     outbound_links: [],
-    fabricated_citations: [
+    reasons: [
       `${REVIEWER} (2:13 AM): No title or author match. Journal and other identifiers match this article.`,
     ],
     is_seed: false,
@@ -141,7 +136,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2020-09-01T00:00:00Z",
     passage: "Cited as the benchmark model used for the power-system stability control comparisons.",
     outbound_links: [],
-    fabricated_citations: [
+    reasons: [
       `${REVIEWER} (2:13 AM): The authors match this paper, but the title, publisher, volume, issue, and page numbers are incorrect. Year (2020) is correct.`,
     ],
     is_seed: false,
@@ -155,7 +150,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2022-06-01T00:00:00Z",
     passage: "Cited as the tube-MPPI baseline used for constrained covariance steering. Verified: authors, title, venue, and pages all match.",
     outbound_links: [],
-    fabricated_citations: [],
+    reasons: [],
     is_seed: false,
   }),
   demoNode(5, {
@@ -167,7 +162,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2020-12-01T00:00:00Z",
     passage: "Cited for the effect of storage-backed voltage source converters on reduced-inertia grid dynamics. Verified: authors, title, venue, and volume all match.",
     outbound_links: [],
-    fabricated_citations: [],
+    reasons: [],
     is_seed: false,
   }),
   demoNode(6, {
@@ -178,7 +173,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2019-01-01T00:00:00Z",
     passage: "Cited within the benchmark-model paper's own references as the optimizer used for its control formulation.",
     outbound_links: [],
-    fabricated_citations: [
+    reasons: [
       `$Source is not found. We did not find a likely match through online search.`,
       `$Marked as resolved.`,
       `$Re-opened.`,
@@ -194,7 +189,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2018-02-01T00:00:00Z",
     passage: "Cited within the benchmark-model paper's own references for European renewable-energy deployment context.",
     outbound_links: [],
-    fabricated_citations: [
+    reasons: [
       ` We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Europe. International Renewable Energy Agency (IRENA). https://www.irena.org/How-we-work/Europe.`,
     ],
     is_seed: false,
@@ -208,7 +203,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "2016-09-28T00:00:00Z",
     passage: "Cited within the benchmark-model paper's own references for the 2016 South Australia black-system event.",
     outbound_links: [],
-    fabricated_citations: [
+    reasons: [
       `We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Review of the System Black Event in South Australia on 28.... https://www.aemc.gov.au/markets-reviews-advice/review-of-the-system-black-event-in-south-australia.`,
     ],
     is_seed: false,
@@ -222,7 +217,7 @@ const nodes: LineageTreeNode[] = [
     timestamp: "1982-01-01T00:00:00Z",
     passage: "Cited within the benchmark-model paper's own references for low-frequency oscillation analysis methodology.",
     outbound_links: [],
-    fabricated_citations: [],
+    reasons: [],
     is_seed: false,
   }),
 ];
@@ -313,10 +308,10 @@ export const CITATION_AUDIT_DEMO: { tree: LineageTree; edges: BackendEdge[] } = 
  * matches), and the default role color (unset here) for citations that were fully verified.
  */
 export const CITATION_AUDIT_NODE_COLORS: Record<string, string> = {
-  "deep-koopman-operator-2020": "#ef7f97",
-  "benchmark-model-power-system-2020": "#ef7f97",
-  "mosek-optimizer-api-2019": "#ef7f97",
-  "irena-renewable-energy-prospects-2018": "#e8c26a",
-  "aemo-black-system-report-2016": "#e8c26a",
-  "westinghouse-frequency-oscillations-1982": "#e8c26a",
+  "deep-koopman-operator-2020": "#9c2b40",
+  "benchmark-model-power-system-2020": "#9c2b40",
+  "mosek-optimizer-api-2019": "#9c2b40",
+  "irena-renewable-energy-prospects-2018": "#a67c1e",
+  "aemo-black-system-report-2016": "#a67c1e",
+  "westinghouse-frequency-oscillations-1982": "#a67c1e",
 };
