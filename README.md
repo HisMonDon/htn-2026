@@ -1,6 +1,6 @@
-# Lineage
+# Ariadne
 
-Lineage traces an AI hallucination through the short chain of documents it propagated across, builds an evidence packet, finds a legitimate correction route, pauses for human approval, submits only to a controlled target, and verifies the result.
+Ariadne traces an AI hallucination through the short chain of documents it propagated across, builds an evidence packet, finds a legitimate correction route, pauses for human approval, submits only to a controlled target, and verifies the result.
 
 ## Setup
 
