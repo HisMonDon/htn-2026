@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AriadneExecution, AriadneRequest, AriadneResponse } from "../../shared/ariadne";
 import { CORPUS } from "../../data/research-corpus";
+import type { Config } from "../config";
 import { createUpstreamSourceProposer, startProviderRun } from "../gptzero/composition";
 import { claimTerms } from "../research/discovery";
+import { MultiSourceProposer } from "../research/multi-proposer";
+import { createWebSearchProposer } from "../research/web-proposer";
 import { assembleDocument, type CandidateDocument } from "../research/extract";
 import { ingestSourceReference } from "../research/ingestion";
 import { CorpusFetcher, CorpusSearch, DirectHttpFetcher, SearchSourceResolver } from "../research/providers";
@@ -27,12 +30,20 @@ function failedTraversal(diagnostic: TraversalDiagnostic, maxDepth: number): Rec
   };
 }
 
-export function createLineageDeps(config: { useMocks: boolean; gptzeroApiKey: string | null }): TraverseProvenanceDeps {
+export function createLineageDeps(config: { useMocks: boolean; gptzeroApiKey: string | null; webSearch?: Config["webSearch"] }): TraverseProvenanceDeps {
   if (config.useMocks) return {
     proposer: { analyze: async (document) => document.outbound_links.map((x) => ({ url: x })) },
     fetcher: new CorpusFetcher(CORPUS), resolver: new SearchSourceResolver(new CorpusSearch(CORPUS)),
   };
-  return { proposer: createUpstreamSourceProposer(config), fetcher: new DirectHttpFetcher() };
+  const gptzero = createUpstreamSourceProposer(config);
+  // Without a search key this is exactly the GPTZero-only proposer it was before.
+  const web = config.webSearch ? createWebSearchProposer(config.webSearch) : null;
+  const proposer = web
+    ? new MultiSourceProposer(gptzero, web, {
+        onChannelFailure: (event) => console.warn(`[proposer] ${event.channel} failed for ${event.document_id}: ${event.message}`),
+      })
+    : gptzero;
+  return { proposer, fetcher: new DirectHttpFetcher() };
 }
 
 export function createLineageController(deps: TraverseProvenanceDeps, mode: "live" | "mock", now = () => new Date()) {

@@ -2,6 +2,8 @@ export interface SearchHit {
   url: string;
   title: string;
   published: string | null;
+  /** Optional result excerpt. Used only to rank candidates cheaply before they are fetched. */
+  snippet?: string | null;
 }
 
 /**

@@ -21,6 +21,7 @@ export type {
 } from "./types";
 export { readAuditMetadata, toAuditMetadata } from "./types";
 export { CorpusSearch, CorpusFetcher } from "./corpus";
+export { BraveSearchProvider, type BraveSearchOptions } from "./brave";
 export { DirectHttpFetcher, type DirectHttpFetcherOptions } from "./http";
 export {
   fetchSource,
