@@ -29,7 +29,7 @@ import {
 } from "@/lib/graph";
 import { displayTitle, formatDate, formatTimestamp, passagePreview, percent } from "@/lib/format";
 import { computeProvenanceLayout } from "@/lib/layout";
-import { ConfidenceBar, Drawer, Field, StringList } from "./panel-ui";
+import { ConfidenceBar, Drawer, Field, StringList, TypedCard } from "./panel-ui";
 import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
 
 const ORDERING_NOTE: Record<string, string> = {
@@ -39,9 +39,11 @@ const ORDERING_NOTE: Record<string, string> = {
   unknown: "Publication order could not be established from the available timestamps.",
 };
 
+const UNKNOWN_COLOR = "#6b7280";
+
 function Endpoint({ id, node, role }: { id: string | null; node: GraphNode | undefined; role: string }) {
   return (
-    <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2">
+    <TypedCard color={node ? ROLE_COLOR[node.role] : UNKNOWN_COLOR} className="px-3 py-2">
       <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{role}</p>
       {node ? (
         <>
@@ -64,7 +66,7 @@ function Endpoint({ id, node, role }: { id: string | null; node: GraphNode | und
       ) : (
         <p className="text-sm text-gray-400 break-all">{id ?? "unknown node"}</p>
       )}
-    </div>
+    </TypedCard>
   );
 }
 
@@ -787,17 +789,17 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
               )}
             </Field>
             {selectedNodeHasTimestampConflict && (
-              <div className="bg-amber-500/10 p-4 rounded-xl border border-amber-500/30">
+              <TypedCard color={ROLE_COLOR.conflict} className="p-4">
                 <p className="text-xs text-amber-400 uppercase font-semibold mb-2">Timestamp conflict</p>
                 <p className="text-sm text-gray-200">Conflicting publication-date signals were detected.</p>
-              </div>
+              </TypedCard>
             )}
             <Field label="Matched passage"><Passage value={selectedNode.passage} /></Field>
             <Field label="Fabricated citations"><StringList items={selectedNode.fabricated_citations} empty="none recorded" /></Field>
             <Field label="Mutations"><StringList items={selectedNode.mutations} empty="none recorded" /></Field>
             <Field label="Discovered via"><StringList items={selectedNode.discovered_via} empty="unknown" /></Field>
             <Field label="Seed">{selectedNode.is_seed ? "yes" : "no"}</Field>
-            <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+            <TypedCard color={UNKNOWN_COLOR} className="p-4">
               <p className="text-xs text-gray-400 uppercase mb-2 flex items-center"><BrainCircuit size={16} className="mr-2" /> AI-origin evidence</p>
               {selectedNode.ai_evidence ? (
                 <div className="space-y-2 text-sm text-gray-200">
@@ -814,7 +816,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                   <p className="text-xs text-gray-600 pt-1">Supplementary evidence only; not a verdict on the claim.</p>
                 </div>
               ) : <p className="text-sm text-gray-500">AI-origin evidence: not available</p>}
-            </div>
+            </TypedCard>
           </div>
         )}
 
@@ -870,15 +872,12 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                 ) : (
                   <div className="space-y-2">
                     {selectedLink.claim_mutations.map((mutation, index) => (
-                      <div
-                        key={`${mutation.type}-${index}`}
-                        className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
-                      >
+                      <TypedCard key={`${mutation.type}-${index}`} color={EDGE_COLOR} className="px-3 py-2">
                         <p className="mb-1 text-[10px] uppercase tracking-wide text-yellow-300/75">
                           {mutation.type}
                         </p>
                         <p className="text-sm leading-relaxed text-gray-200">{mutation.summary}</p>
-                      </div>
+                      </TypedCard>
                     ))}
                   </div>
                 )}
@@ -910,12 +909,16 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
                   {selectedLink.alternatives.map((alt, i) => {
                     const c = nodesById.get(alt.candidate_id);
                     return (
-                      <div key={`${alt.candidate_id}-${i}`} className="bg-white/5 rounded-lg border border-white/10 px-3 py-2 space-y-1">
+                      <TypedCard
+                        key={`${alt.candidate_id}-${i}`}
+                        color={c ? ROLE_COLOR[c.role] : UNKNOWN_COLOR}
+                        className="px-3 py-2 space-y-1"
+                      >
                         <p className="text-sm text-gray-100 leading-snug">{c ? displayTitle(c) : alt.candidate_id}</p>
                         {c && <p className="text-xs text-gray-500">{c.publisher}</p>}
                         <p className="text-xs text-gray-400">Confidence: {percent(alt.confidence)}</p>
                         <p className="text-xs text-gray-400">Reason: {alt.reason}</p>
-                      </div>
+                      </TypedCard>
                     );
                   })}
                 </div>

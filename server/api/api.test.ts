@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CASE_ID, harness, type Harness } from "../test-helpers";
 import { createApi } from "./app";
+import { createLineageController, createLineageDeps } from "./lineage";
 
 let h: Harness;
 let server: Server;
@@ -93,7 +94,6 @@ describe("API", () => {
 
 describe("research API", () => {
   it("reconstructs a tree from a claim and serves it again by id", async () => {
-    const { createLineageController, createLineageDeps } = await import("./lineage");
     const handle = createApi(
       h.service,
       { mocks: true, operator: "offline-heuristic", detector: "mock", controlled_target_url: h.target.url },

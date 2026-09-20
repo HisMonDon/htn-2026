@@ -28,6 +28,8 @@ export const DEFAULT_WEB_SEARCH_LIMITS: WebSearchLimits = { maxQueries: 5, resul
 /** Only the claim-bearing opening of a document is mined for queries. */
 const MAX_SOURCE_CHARS = 2000;
 const FRAGMENT_WORDS = 8;
+/** Stays under the search-query length cap so a multi-name query is never truncated mid-quote. */
+const MAX_QUERY_CHARS = 190;
 
 /** Words that carry no search value on their own: function words plus generic claim boilerplate. */
 const GENERIC = new Set(
@@ -179,11 +181,28 @@ export function planWebQueries(document: CandidateDocument, limits: Pick<WebSear
   const entities = capitalizedEntities(masked).filter((entity) => !cases.some((name) => name.includes(entity))).slice(0, 4);
   const fragment = distinctiveFragment(masked);
 
+  // Common surnames ("Ortiz") match many unrelated real cases, so the rarest names (hyphenated,
+  // then longest) are searched individually first; the all-names queries catch the rest.
+  const rarity = (name: string) => {
+    const party = name.split(/\sv\.\s/)[1] ?? name;
+    return (party.includes("-") ? 100 : 0) + party.length;
+  };
+  const rarestFirst = [...cases].sort((a, b) => rarity(b) - rarity(a));
+  // Only documents discussing several of the names can be the source of a claim that lists them all,
+  // so one exact-phrase query for the whole set is the most selective query available.
+  let everyCase = "";
+  for (const name of cases) {
+    const next = `${everyCase} "${name}"`.trim();
+    if (next.length > MAX_QUERY_CHARS) break;
+    everyCase = next;
+  }
+
   const candidates: string[] = [
     ...quoted.map((phrase) => `"${phrase}"`),
-    ...cases.map(withTopic),
-    ...(surnames.length > 1 ? [surnames.join(" ")] : []),
+    ...(cases.length > 1 ? [everyCase, surnames.join(" ")] : []),
+    ...(rarestFirst[0] ? [withTopic(rarestFirst[0])] : []),
     ...(fragment ? [`"${fragment}"`] : []),
+    ...rarestFirst.slice(1).map(withTopic),
     ...urls.map((url) => `"${url}"`),
     ...entities.map(withTopic),
   ];
@@ -199,7 +218,10 @@ export function planWebQueries(document: CandidateDocument, limits: Pick<WebSear
     if (queries.length >= limits.maxQueries) break;
   }
 
-  const anchors = unique([...surnames, ...entities].flatMap((value) => words(value)).filter(isContentWord));
+  // With named cases, only their party names anchor a result: generic entities ("Second Circuit")
+  // appear on countless unrelated pages and would let anything through the pre-fetch filter.
+  const nameAnchors = unique(surnames.flatMap((value) => words(value)).filter(isContentWord));
+  const anchors = nameAnchors.length ? nameAnchors : unique(entities.flatMap((value) => words(value)).filter(isContentWord));
   return {
     queries,
     phrases: unique([...cases, ...quoted, ...(fragment ? [fragment] : []), ...entities.filter((entity) => entity.includes(" "))].map((phrase) => words(phrase).join(" ")).filter(Boolean)),
@@ -227,6 +249,16 @@ function hostBonus(url: string): number {
   }
 }
 
+/** Tag/category/search/archive pages list many articles and are almost never the source of a claim. */
+function listingPenalty(url: string): number {
+  try {
+    const { pathname, searchParams } = new URL(url);
+    return /\/(category|categories|tag|tags|topic|topics|search|archive|archives|author|page\/\d+)(\/|$)/i.test(pathname) || searchParams.has("s") ? 1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Cheap, deterministic pre-fetch ranking. The score only orders and prunes candidates so that the
  * expensive fetch/validation budget is spent on the likeliest ones; it is never surfaced or reused
@@ -247,7 +279,7 @@ export function rankWebHits(collected: readonly CollectedHit[], plan: WebQueryPl
     const anchorRatio = plan.anchors.length ? anchorHits / plan.anchors.length : 0;
     const titleSimilarity = jaccard(new Set(words(hit.title)), passageWords);
     const score =
-      phraseHits * 3 + anchorRatio * 2 + titleSimilarity + 0.5 / (1 + bestRank) + Math.min(queries.size - 1, 3) * 0.4 + hostBonus(hit.url);
+      phraseHits * 3 + anchorRatio * 2 + titleSimilarity + 0.5 / (1 + bestRank) + Math.min(queries.size - 1, 3) * 0.4 + hostBonus(hit.url) - listingPenalty(hit.url);
     ranked.push({ hit, score });
   }
   return ranked.sort((a, b) => b.score - a.score || a.hit.url.localeCompare(b.hit.url)).slice(0, maxCandidates);
@@ -262,12 +294,26 @@ export interface WebSearchDebugEvent {
 }
 
 export interface WebSearchProposerOptions extends Partial<WebSearchLimits> {
+  /** Total time one analyzed source may spend searching. Default 10s. */
+  deadlineMs?: number;
   onDebug?: (event: WebSearchDebugEvent) => void;
+}
+
+const DEFAULT_DEADLINE_MS = 10_000;
+
+/** Rejects after `ms`; the timer never outlives the call, and a late provider result is ignored, not unhandled. */
+function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 export class WebSearchProposer implements UpstreamSourceProposer {
   readonly kind = "web-search" as const;
   private readonly limits: WebSearchLimits;
+  private readonly deadlineMs: number;
 
   constructor(
     private readonly search: SearchProvider,
@@ -278,6 +324,7 @@ export class WebSearchProposer implements UpstreamSourceProposer {
       resultsPerQuery: options.resultsPerQuery ?? DEFAULT_WEB_SEARCH_LIMITS.resultsPerQuery,
       maxCandidates: options.maxCandidates ?? DEFAULT_WEB_SEARCH_LIMITS.maxCandidates,
     };
+    this.deadlineMs = options.deadlineMs ?? DEFAULT_DEADLINE_MS;
   }
 
   async analyze(document: CandidateDocument): Promise<readonly UpstreamProposal[]> {
@@ -289,12 +336,23 @@ export class WebSearchProposer implements UpstreamSourceProposer {
     const failedQueries: string[] = [];
     let lastError: unknown = null;
     let hitsReceived = 0;
+    let succeeded = 0;
+    const deadline = Date.now() + this.deadlineMs;
 
     // Sequential on purpose: a handful of queries per node, and search APIs commonly rate-limit bursts.
+    // The whole node shares one time budget, so a hung provider costs at most `deadlineMs`, not
+    // one timeout per query.
     for (const query of plan.queries) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        failedQueries.push(query);
+        lastError ??= new Error(`web search exceeded its ${this.deadlineMs}ms budget`);
+        continue;
+      }
       let hits: SearchHit[];
       try {
-        hits = await this.search.search(query, this.limits.resultsPerQuery);
+        hits = await withDeadline(this.search.search(query, this.limits.resultsPerQuery), remaining, "web search");
+        succeeded += 1;
       } catch (error) {
         failedQueries.push(query);
         lastError = error;
@@ -321,16 +379,17 @@ export class WebSearchProposer implements UpstreamSourceProposer {
       }
     }
 
-    // Every query failing is a provider failure, not "the web has nothing"; one bad query is not.
-    if (failedQueries.length === plan.queries.length) {
+    // No query completing is a provider failure, not "the web has nothing"; one bad query is not.
+    if (succeeded === 0) {
       throw lastError instanceof Error ? lastError : new Error("web search failed");
     }
 
     const selected = rankWebHits([...collected.values()], plan, document.passage || document.text, this.limits.maxCandidates);
+    // A search engine's date for a result is not evidence: `published` is deliberately not forwarded,
+    // so nothing the web channel reports can reach the chronology signal the validator scores.
     const proposals: UpstreamProposal[] = selected.map(({ hit }) => ({
       url: hit.url,
       title: hit.title || null,
-      published: hit.published,
       discovered_by: [WEB_SEARCH_CHANNEL],
     }));
     this.options.onDebug?.({
@@ -354,6 +413,8 @@ export function createWebSearchProposer(
     maxQueries: config.maxQueries,
     resultsPerQuery: config.resultsPerQuery,
     maxCandidates: config.maxCandidates,
+    // The same budget bounds one request and the whole node, so a hung provider costs one timeout.
+    deadlineMs: config.timeoutMs,
     onDebug: options.onDebug,
   });
 }

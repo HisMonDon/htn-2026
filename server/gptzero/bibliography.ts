@@ -113,7 +113,12 @@ export class GPTZeroTimeoutError extends Error {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 20_000;
+/**
+ * A scan of a real fetched page takes 17-33s (measured live, 4 concurrent scans of 4-11k chars;
+ * the submitted claim alone takes 9-19s), so 20s aborted nearly every child-document scan and
+ * recursion never got past depth 0. 45s leaves headroom over the slowest observed scan.
+ */
+const DEFAULT_TIMEOUT_MS = 45_000;
 
 function isPendingAnalysis(analysis: UpstreamAnalysis): analysis is { status: "pending"; job_id: string; retry_after_ms?: number | null } {
   return !Array.isArray(analysis) && (analysis as { status?: string }).status === "pending";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { LineageTree, LineageTreeEdge, LineageTreeNode } from "./api";
-import { graphLegendItems, toGraphData } from "./graph";
+import type { BackendEdge, LineageTree, LineageTreeEdge, LineageTreeNode } from "./api";
+import { candidateStrength, graphLegendItems, toGraphData } from "./graph";
 
 function node(
   id: string,
@@ -103,5 +103,88 @@ describe("graph presentation semantics", () => {
 
     expect(data.nodes[0]?.role).toBe("conflict");
     expect(graphLegendItems(data).map((item) => item.label)).toContain("Timestamp conflict");
+  });
+});
+
+describe("candidate matches carried only by the backend response", () => {
+  const candidate = (source: string | null, target: string): BackendEdge => ({
+    id: `${source}-${target}`, source, target, reference_url: source ? `https://example.com/${source}` : null, status: "candidate", reason: "Awaiting validation",
+  }) as BackendEdge;
+
+  it("draws a fetched source matched to the submitted text even though no validated edge touches it", () => {
+    const seed = node("seed", "submitted");
+    const source = node("source", "fetched");
+    // The compatibility tree holds only the submitted text; the source exists only in the full node list.
+    const data = toGraphData(tree([seed], []), [candidate("source", "seed")], [seed, source]);
+
+    expect(data.nodes.map((item) => item.id)).toEqual(["seed", "source"]);
+    expect(data.nodes.find((item) => item.id === "source")?.role).toBe("candidate");
+    expect(data.links).toHaveLength(1);
+    expect(data.links[0]).toMatchObject({ source: "source", target: "seed", kind: "candidate_match", backend_status: "candidate" });
+    expect(data.links[0]?.basis).toMatch(/not validated provenance/);
+    expect(graphLegendItems(data).map((item) => item.label)).toEqual(["Seed", "Candidate source"]);
+  });
+
+  it("shows a real, non-zero match strength: the share of the claim's distinctive words the source repeats", () => {
+    const seed = node("seed", "submitted");
+    const claim = "Second Circuit decisions granted early termination of supervised release";
+    const base = tree([seed], []);
+    base.seed.claim = claim;
+    const strong = node("strong", "fetched", { title: "Early termination", passage: "The Second Circuit granted early termination of supervised release in these decisions." });
+    const weak = node("weak", "fetched", { title: "Gardening", passage: "Tomatoes need water. Supervised release is unrelated here." });
+    const none = node("none", "fetched", { title: "Nothing", passage: "Completely different subject matter." });
+    const data = toGraphData(base, [candidate("strong", "seed"), candidate("weak", "seed"), candidate("none", "seed")], [seed, strong, weak, none]);
+    const strength = (id: string) => data.links.find((link) => link.source === id)!.confidence;
+
+    expect(strength("strong")).toBeGreaterThan(0.8);
+    expect(strength("weak")).toBeGreaterThan(0);
+    expect(strength("weak")).toBeLessThan(strength("strong"));
+    expect(strength("none")).toBe(0);
+    expect(candidateStrength(claim, "")).toBe(0);
+    expect(data.links.find((link) => link.source === "strong")?.basis).toMatch(/\d+% of the submitted text/);
+  });
+
+  it("never presents a candidate match as validated provenance", () => {
+    const seed = node("seed", "submitted");
+    const data = toGraphData(tree([seed], []), [candidate("source", "seed")], [seed, node("source", "fetched")]);
+
+    expect(data.links.some((link) => link.kind === "validated_provenance")).toBe(false);
+    expect(graphLegendItems(data).map((item) => item.label)).not.toContain("Validated provenance");
+  });
+
+  it("removes a promoted source from the excluded list, and keeps genuinely excluded pages there", () => {
+    const seed = node("seed", "submitted");
+    const base = tree([seed], []);
+    base.excluded = [
+      { id: "source", url: "https://example.com/source", reason: "No validated edge connects this source to the seed." },
+      { id: "noise", url: "https://example.com/noise", reason: "No validated edge connects this source to the seed." },
+    ];
+    const data = toGraphData(base, [candidate("source", "seed")], [seed, node("source", "fetched"), node("noise", "fetched")]);
+
+    expect(data.excludedCandidates.map((item) => item.id)).toEqual(["noise"]);
+    expect(data.nodes.map((item) => item.id)).not.toContain("noise");
+  });
+
+  it("ignores unresolved candidates (no source yet), unknown documents, and duplicate matches", () => {
+    const seed = node("seed", "submitted");
+    const source = node("source", "fetched");
+    const data = toGraphData(
+      tree([seed], []),
+      [candidate(null, "seed"), candidate("ghost", "seed"), candidate("source", "seed"), candidate("source", "seed")],
+      [seed, source],
+    );
+
+    expect(data.nodes.map((item) => item.id)).toEqual(["seed", "source"]);
+    expect(data.links).toHaveLength(1);
+  });
+
+  it("leaves a source that already has validated edges alone (no duplicate node)", () => {
+    const seed = node("seed", "submitted");
+    const source = node("source", "fetched");
+    const upstream = node("upstream", "fetched");
+    const data = toGraphData(tree([seed, source, upstream], [edge("upstream", "source")]), [candidate("source", "seed")], [seed, source, upstream]);
+
+    expect(data.nodes.filter((item) => item.id === "source")).toHaveLength(1);
+    expect(data.links.map((link) => link.kind).sort()).toEqual(["candidate_match", "validated_provenance"]);
   });
 });

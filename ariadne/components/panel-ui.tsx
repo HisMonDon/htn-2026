@@ -2,8 +2,38 @@
 
 import React from "react";
 import { X, ExternalLink } from "lucide-react";
+import PixelCard from "./PixelCard";
+import { pixelPalette } from "@/lib/pixel-card-colors";
 
 /** Shared chrome for the right-side inspectors, so they read as one interface. */
+
+/** A bordered content block whose border and hover-pixel colour both read as `color` — the type of thing it holds. */
+export function TypedCard({
+  color,
+  className = "",
+  children,
+}: {
+  color: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <PixelCard
+      colors={pixelPalette(color)}
+      noFocus
+      className={className}
+      style={
+        {
+          "--pixel-card-border": `${color}4d`,
+          "--pixel-card-border-hover": `${color}b3`,
+          "--pixel-card-active-color": `${color}33`,
+        } as React.CSSProperties
+      }
+    >
+      {children}
+    </PixelCard>
+  );
+}
 
 export function Drawer({ open, children }: { open: boolean; children: React.ReactNode }) {
   return (

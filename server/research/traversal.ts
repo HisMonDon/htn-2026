@@ -3,7 +3,7 @@ import { canonicalizeDocuments } from "./canonicalize";
 import { claimTerms } from "./discovery";
 import { computeTimings, MIN_COVERAGE, ordering, scoreEdge, temporalEvidence as temporal, type ScoredEdge, type Timing } from "./edges";
 import { canonicalUrl, type CandidateDocument } from "./extract";
-import { ingestSourceReference, type IngestionFailure } from "./ingestion";
+import { ingestSourceReference, type IngestionFailure, type IngestionResult } from "./ingestion";
 import { analyzeClaimMutations } from "./mutations";
 import type { PageFetcher, SourceReference, SourceResolver } from "./providers";
 import { ACCEPT_THRESHOLD } from "./tree";
@@ -217,6 +217,11 @@ export interface TraversalCheckpoint {
   stats: Omit<RecursiveProvenanceTraversal["stats"], "max_depth" | "sources_expanded">;
 }
 
+/** How many of one node's proposed sources are fetched at once. */
+const ACQUISITION_CONCURRENCY = 4;
+/** How many same-depth sources have a provider analysis in flight at once (GPTZero allows ~10 scans/min). */
+const ANALYSIS_CONCURRENCY = 3;
+
 function keyOf(document: CandidateDocument): string {
   return document.content_fingerprint;
 }
@@ -369,6 +374,20 @@ export async function traverseProvenance(
     return false;
   };
 
+  // Provider analyses already started for a queued source, consumed when the loop reaches it.
+  const analyses = new Map<string, Promise<UpstreamAnalysis>>();
+  const startAnalysis = (source: QueuedSource, document: CandidateDocument): Promise<UpstreamAnalysis> => {
+    let started: Promise<UpstreamAnalysis>;
+    try {
+      started = Promise.resolve(deps.proposer.analyze(document, source.job_id ? { job_id: source.job_id } : undefined));
+    } catch (error) {
+      started = Promise.reject(error);
+    }
+    started.catch(() => undefined); // surfaced when consumed; never an unhandled rejection if the run pauses first
+    analyses.set(source.key, started);
+    return started;
+  };
+
   while (queue.length) {
     const byKey = documentsByKey();
     queue.sort((a, b) => sourceSort(a, b, byKey));
@@ -401,8 +420,25 @@ export async function traverseProvenance(
     try {
       requestsThisCall += 1;
       analysisRequests += 1;
-      analysis = await deps.proposer.analyze(child, current.job_id ? { job_id: current.job_id } : undefined);
+      const own = analyses.get(current.key) ?? startAnalysis(current, child);
+      // A provider scan takes 10-40s and is independent per source, so this source's same-depth peers
+      // (e.g. every candidate root of a claim) are started now instead of waiting their turn. Each is
+      // still consumed in its normal turn below, so what is accepted, and in what order, is unchanged.
+      // Started scans count against the same per-call budget, so none can exceed it. The submitted text
+      // itself always runs alone: it is what creates its peers.
+      if (!isSubmittedText(child)) {
+        for (const peer of queue) {
+          if (analyses.size >= ANALYSIS_CONCURRENCY || requestsThisCall + analyses.size > maxProviderRequests) break;
+          if (peer.depth !== current.depth) break;
+          const peerDocument = byKey.get(peer.key);
+          if (!peerDocument || analyses.has(peer.key) || sourceState.get(peer.key) === "expanded" || isSubmittedText(peerDocument)) continue;
+          startAnalysis(peer, peerDocument);
+        }
+      }
+      analysis = await own;
+      analyses.delete(current.key);
     } catch (error) {
+      analyses.delete(current.key);
       terminations.push({
         source_id: child.id,
         url: child.url,
@@ -448,9 +484,44 @@ export async function traverseProvenance(
       continue;
     }
 
+    const acquire = (proposal: ProposedUpstreamSource) =>
+      ingestSourceReference(proposal, { fetcher: deps.fetcher, resolver: deps.resolver }, {
+        fabricated: input.fabricated,
+        claimTerms: claimTerms(input.claim, input.fabricated),
+        discoveredVia: `upstream proposal from ${child.id}`,
+        published: proposal.published,
+      });
+    const sortedProposals = [...proposals].sort(proposalSort);
+    // Acquisition is network-bound and independent per source, so this node's fetches run together
+    // (bounded). Results are still consumed below in the sorted order, one at a time, so which
+    // documents are accepted, and in what order, is exactly what a serial run would produce.
+    const acquisitions = new Map<string, Promise<IngestionResult>>();
+    let activeAcquisitions = 0;
+    const waitingAcquisitions: Array<() => void> = [];
+    const knownUrls = urlToKey();
+    for (const proposal of sortedProposals) {
+      const requestedUrl = proposalUrl(proposal);
+      if (proposal.url && !requestedUrl && !hasBibliographicReference(proposal)) continue;
+      const referenceKey = requestedUrl ?? (proposalLabel(proposal) || "unidentified upstream source");
+      if (acquisitions.has(referenceKey) || referenceToKey.has(referenceKey) || failedReferences.has(referenceKey)) continue;
+      if (requestedUrl && knownUrls.has(requestedUrl)) continue;
+      const started = (async () => {
+        if (activeAcquisitions >= ACQUISITION_CONCURRENCY) await new Promise<void>((resolve) => waitingAcquisitions.push(resolve));
+        activeAcquisitions += 1;
+        try {
+          return await acquire(proposal);
+        } finally {
+          activeAcquisitions -= 1;
+          waitingAcquisitions.shift()?.();
+        }
+      })();
+      started.catch(() => undefined); // surfaced when consumed; never an unhandled rejection if the node exits early
+      acquisitions.set(referenceKey, started);
+    }
+
     let acceptedForSource = 0;
     let candidateRootsForSource = 0;
-    for (const proposal of [...proposals].sort(proposalSort)) {
+    for (const proposal of sortedProposals) {
       const requestedUrl = proposalUrl(proposal);
       const reference = proposalLabel(proposal) || "unidentified upstream source";
       if (proposal.url && !requestedUrl && !hasBibliographicReference(proposal)) {
@@ -468,6 +539,21 @@ export async function traverseProvenance(
       let byUrl = urlToKey();
       const referenceKey = requestedUrl ?? reference;
       let parentKey = referenceToKey.get(referenceKey) ?? (requestedUrl ? byUrl.get(requestedUrl) : undefined);
+      if (parentKey && parentKey !== current.key && proposal.discovered_by?.length) {
+        // Rediscovered by another route: remember every channel that found it. Metadata only.
+        let changed = false;
+        for (const [index, known] of rawDocuments.entries()) {
+          if (keyOf(known) !== parentKey) continue;
+          const added = proposal.discovered_by.filter((channel) => !known.discovered_via.includes(channel));
+          if (!added.length) continue;
+          rawDocuments[index] = { ...known, discovered_via: [...known.discovered_via, ...added] };
+          changed = true;
+        }
+        if (changed) {
+          canonicalized = canonicalizeDocuments(rawDocuments);
+          documents = canonicalized.documents;
+        }
+      }
       if (!parentKey) {
         const priorFailure = failedReferences.get(referenceKey);
         if (priorFailure) {
@@ -481,12 +567,7 @@ export async function traverseProvenance(
           });
           continue;
         }
-        const ingested = await ingestSourceReference(proposal, { fetcher: deps.fetcher, resolver: deps.resolver }, {
-          fabricated: input.fabricated,
-          claimTerms: claimTerms(input.claim, input.fabricated),
-          discoveredVia: `upstream proposal from ${child.id}`,
-          published: proposal.published,
-        });
+        const ingested = await (acquisitions.get(referenceKey) ?? acquire(proposal));
         if (!ingested.ok) {
           fetchFailures += 1;
           const failure = `${ingested.reason}${ingested.detail ? `: ${ingested.detail}` : ""}`;

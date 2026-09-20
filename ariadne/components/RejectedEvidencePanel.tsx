@@ -3,18 +3,20 @@
 import React from "react";
 import { ArrowDown, FilterX } from "lucide-react";
 import type { ExcludedCandidate, RejectedEdge } from "@/lib/api";
-import { isSubmittedNode, type GraphNode } from "@/lib/graph";
+import { isSubmittedNode, ROLE_COLOR, type GraphNode } from "@/lib/graph";
 import { displayTitle, hostOf, percent } from "@/lib/format";
-import { ConfidenceBar, Drawer, Field, PanelHeader, SourceLink } from "./panel-ui";
+import { ConfidenceBar, Drawer, Field, PanelHeader, SourceLink, TypedCard } from "./panel-ui";
 
 export type EvidenceTab = "rejected" | "excluded";
 
 const REJECTED_COLOR = "#f87171";
+const EXCLUDED_COLOR = "#fb923c";
+const UNKNOWN_COLOR = "#6b7280";
 
 /** Endpoint of a rejected relationship: the resolved node when we have it, else the raw id. */
 function Endpoint({ role, id, node }: { role: string; id: string; node: GraphNode | undefined }) {
   return (
-    <div className="bg-white/5 rounded-lg border border-white/10 px-3 py-2">
+    <TypedCard color={node ? ROLE_COLOR[node.role] : UNKNOWN_COLOR} className="px-3 py-2">
       <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{role}</p>
       {node ? (
         <>
@@ -31,7 +33,7 @@ function Endpoint({ role, id, node }: { role: string; id: string; node: GraphNod
       ) : (
         <p className="text-sm text-gray-400 break-all">{id}</p>
       )}
-    </div>
+    </TypedCard>
   );
 }
 
@@ -119,9 +121,10 @@ export default function RejectedEvidencePanel({
               <p className="text-sm text-gray-500">No rejected relationships were recorded.</p>
             ) : (
               rejectedEdges.map((edge, index) => (
-                <div
+                <TypedCard
                   key={`${edge.parent_id}-${edge.child_id}-${index}`}
-                  className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-3"
+                  color={REJECTED_COLOR}
+                  className="p-4 space-y-3"
                 >
                   <Endpoint role="Parent" id={edge.parent_id} node={nodesById.get(edge.parent_id)} />
                   <div className="flex items-center justify-center text-[10px] text-gray-600 uppercase tracking-wide">
@@ -141,7 +144,7 @@ export default function RejectedEvidencePanel({
                   <Field label="Reason">
                     <p className="leading-relaxed">{edge.reason}</p>
                   </Field>
-                </div>
+                </TypedCard>
               ))
             )}
           </div>
@@ -162,10 +165,7 @@ export default function RejectedEvidencePanel({
                 // Heading falls back to the URL's host, then the raw id - nothing invented.
                 const heading = node ? displayTitle(node) : hostOf(candidate.url) ?? candidate.id;
                 return (
-                  <div
-                    key={`${candidate.id}-${index}`}
-                    className="bg-white/5 rounded-xl border border-white/10 p-4 space-y-2"
-                  >
+                  <TypedCard key={`${candidate.id}-${index}`} color={EXCLUDED_COLOR} className="p-4 space-y-2">
                     <p className="text-sm text-gray-100 leading-snug">{heading}</p>
                     {node && isSubmittedNode(node) ? (
                       <p className="text-xs text-blue-300/75">User-submitted text</p>
@@ -178,7 +178,7 @@ export default function RejectedEvidencePanel({
                     <Field label="Reason">
                       <p className="leading-relaxed">{candidate.reason}</p>
                     </Field>
-                  </div>
+                  </TypedCard>
                 );
               })
             )}

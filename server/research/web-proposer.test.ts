@@ -44,6 +44,23 @@ describe("planWebQueries", () => {
     expect(plan.anchors).toEqual(expect.arrayContaining(["figueroa", "florez", "ortiz", "amato"]));
   });
 
+  it("spends a 5-query cap on the most selective queries: the whole-set query, the rarest name, and the exact fragment", () => {
+    const { queries } = planWebQueries(documentOf(CLAIM), { maxQueries: 5 });
+    expect(queries).toEqual([
+      '"United States v. Figueroa-Florez" "United States v. Ortiz" "United States v. Amato"',
+      "Figueroa-Florez Ortiz Amato",
+      '"United States v. Figueroa-Florez" early termination supervised release',
+      expect.stringContaining("early termination of supervised release"),
+      '"United States v. Ortiz" early termination supervised release',
+    ]);
+  });
+
+  it("anchors on case party names, not generic entities like a court name, so generic pages fail the pre-fetch filter", () => {
+    const { anchors } = planWebQueries(documentOf(CLAIM), { maxQueries: 8 });
+    expect(anchors).toEqual(expect.arrayContaining(["figueroa", "florez", "ortiz", "amato"]));
+    expect(anchors).not.toContain("circuit");
+  });
+
   it("uses quoted passages, entities and mentioned URLs, and skips generic text entirely", () => {
     const rich = planWebQueries(
       documentOf('Dr. Maria Okafor of the Lagos Institute said "microplastics degrade within twenty four hours" in a study at https://nature.example/paper1 on the Vantor enzyme.', "https://a.test/x", []),
@@ -132,6 +149,43 @@ describe("WebSearchProposer", () => {
 
     const down = search(() => new Error("search API down"));
     await expect(new WebSearchProposer(down).analyze(doc())).rejects.toThrow("search API down");
+  });
+
+  it("never forwards a search engine's date: nothing the web reports can reach the chronology the validator scores", async () => {
+    const provider = search(() => [{ url: "https://relevant.test/a", title: "United States v. Ortiz", published: "2020-01-01T00:00:00", snippet: null }]);
+    const [proposal] = await new WebSearchProposer(provider).analyze(doc());
+    expect(proposal).toBeDefined();
+    expect(proposal).not.toHaveProperty("published");
+  });
+
+  it("bounds one node's total search time, so a hung provider costs one budget rather than one timeout per query", async () => {
+    const hung = search(() => []);
+    hung.search.mockImplementation(() => new Promise(() => undefined));
+    const started = Date.now();
+    await expect(new WebSearchProposer(hung, { deadlineMs: 60 }).analyze(doc())).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(hung.search).toHaveBeenCalledTimes(1); // later queries are skipped once the budget is spent
+  });
+
+  it("keeps what completed before the budget ran out", async () => {
+    let calls = 0;
+    const provider = search(() => []);
+    provider.search.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) return [hit("https://relevant.test/a", "United States v. Ortiz")];
+      return new Promise(() => undefined);
+    });
+    const proposals = await new WebSearchProposer(provider, { deadlineMs: 80 }).analyze(doc());
+    expect(proposals.map((proposal) => proposal.url)).toEqual(["https://relevant.test/a"]);
+  });
+
+  it("demotes tag/category/search listing pages below article pages before applying the cap", async () => {
+    const provider = search(() => [
+      hit("https://blog.test/category/supervised-release", "United States v. Ortiz supervised release"),
+      hit("https://blog.test/2023/12/ortiz-analysis", "United States v. Ortiz supervised release"),
+    ]);
+    const proposals = await new WebSearchProposer(provider, { maxCandidates: 1 }).analyze(doc());
+    expect(proposals.map((proposal) => proposal.url)).toEqual(["https://blog.test/2023/12/ortiz-analysis"]);
   });
 
   it("is disabled (no proposer) without an API key", () => {

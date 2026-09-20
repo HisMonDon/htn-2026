@@ -159,6 +159,29 @@ describe("MultiSourceProposer", () => {
     expect(gptzero.analyze).toHaveBeenLastCalledWith(document, { job_id: "job-1" });
   });
 
+  it("does not repeat identical searches on resume, even when the first search found nothing, but retries a failed one", async () => {
+    const pausedThenDone = () => {
+      const gptzero = { analyze: vi.fn() };
+      gptzero.analyze.mockResolvedValueOnce({ status: "pending", job_id: "job-1", retry_after_ms: 0 }).mockResolvedValueOnce([]);
+      return gptzero;
+    };
+    const document = someDoc();
+
+    const empty = stub([]);
+    const emptyProposer = new MultiSourceProposer(pausedThenDone(), empty);
+    await emptyProposer.analyze(document);
+    await emptyProposer.analyze(document, { job_id: "job-1" });
+    expect(empty.analyze).toHaveBeenCalledTimes(1);
+
+    const flaky = { analyze: vi.fn() };
+    flaky.analyze.mockRejectedValueOnce(new Error("search API down")).mockResolvedValueOnce([{ url: "https://w.test/1" }]);
+    const failedProposer = new MultiSourceProposer(pausedThenDone(), flaky);
+    await failedProposer.analyze(document);
+    const resumed = proposalsOf(await failedProposer.analyze(document, { job_id: "job-1" }));
+    expect(flaky.analyze).toHaveBeenCalledTimes(2);
+    expect(resumed.map((proposal) => proposal.url)).toEqual(["https://w.test/1"]);
+  });
+
   it("forwards the per-run provider budget to GPTZero", () => {
     const startRun = vi.fn();
     new MultiSourceProposer({ analyze: vi.fn(), startRun } as never, stub([])).startRun(7);
@@ -242,6 +265,25 @@ describe("web proposals inside real recursive traversal", () => {
     expect(result.documents.filter((document) => document.url === b.url)).toHaveLength(1);
     expect(result.documents.find((document) => document.url === b.url)!.discovered_via).toEqual(expect.arrayContaining(["gptzero", "web-search"]));
     expect(accepted(result)).toEqual([`${b.url}>${a.url}`]);
+  });
+
+  it("adds a discovery channel to a document already fetched from another node, without refetching it", async () => {
+    const fetchCalls: string[] = [];
+    const analyzed: string[] = [];
+    // a -> b (GPTZero) and b -> c (GPTZero), then a second route to c: a also proposes c via web search.
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+      {
+        fetcher: fetcher([a, b, c], fetchCalls),
+        proposer: new MultiSourceProposer(
+          routed({ [a.url]: [{ url: b.url }, { url: c.url }], [b.url]: [{ url: c.url }] }, analyzed),
+          routed({ [b.url]: [{ url: c.url, discovered_by: ["web-search"] }] }),
+        ),
+      },
+    );
+
+    expect(fetchCalls.filter((url) => url === canonicalUrl(c.url))).toHaveLength(1);
+    expect(result.documents.find((document) => document.url === c.url)!.discovered_via).toEqual(expect.arrayContaining(["gptzero", "web-search"]));
   });
 
   it("continues with the web's candidates when GPTZero fails on a source", async () => {

@@ -122,8 +122,9 @@ export class MultiSourceProposer implements UpstreamSourceProposer {
     }
 
     if (isPending(primary.value)) {
-      // Paused work resumes later; keep this run's web results so the resume doesn't search again.
-      if (webProposals.length > 0) this.remember(document.id, webProposals);
+      // Paused work resumes later; keep this run's web results (even an empty answer) so the resume
+      // doesn't repeat identical searches. A failed search is not kept: the resume may retry it.
+      if (secondary.status === "fulfilled") this.remember(document.id, webProposals);
       return primary.value;
     }
 

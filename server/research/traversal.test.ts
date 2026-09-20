@@ -547,4 +547,108 @@ describe("proposal metadata isolation", () => {
     expect(high.terminations).toEqual(low.terminations);
     expect(high.stats).toEqual(low.stats);
   });
+
+  it("fetches one node's proposed sources concurrently (bounded) without changing what is accepted", async () => {
+    const a = { url: "https://sources.test/a", date: "2023-01-09", marker: "A", links: [1, 2, 3, 4, 5, 6].map((n) => `https://sources.test/p${n}`) };
+    const parents = [1, 2, 3, 4, 5, 6].map((n) => ({ url: `https://sources.test/p${n}`, date: `2023-01-0${n}`, marker: `P${n}` }));
+    const run = async (delayMs: number, order: (list: ProposedUpstreamSource[]) => ProposedUpstreamSource[]) => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const base = fetcher([a, ...parents], []);
+      const slow: PageFetcher = {
+        async fetch(url) {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          inFlight -= 1;
+          return base.fetch(url);
+        },
+      };
+      const proposals = order(parents.map((page) => proposed(page.url)));
+      const result = await traverseProvenance(
+        { seed: seed(a), claim: CLAIM, fabricated: FABRICATED },
+        { fetcher: slow, proposer: proposer(new Map([[a.url, proposals]]), []) },
+      );
+      return { result, maxInFlight };
+    };
+
+    const concurrent = await run(15, (list) => list);
+    const serialLike = await run(0, (list) => [...list].reverse());
+
+    expect(concurrent.maxInFlight).toBeGreaterThan(1);
+    expect(concurrent.maxInFlight).toBeLessThanOrEqual(4);
+    expect(concurrent.result.stats.fetched).toBe(6);
+    expect(acceptedUrls(concurrent.result)).toEqual(acceptedUrls(serialLike.result));
+    expect(concurrent.result.rejected_edges.map((edge) => `${edge.parent_url}|${edge.termination}`)).toEqual(
+      serialLike.result.rejected_edges.map((edge) => `${edge.parent_url}|${edge.termination}`),
+    );
+  });
+
+  describe("provider analyses of same-depth sources", () => {
+    const roots = [1, 2, 3, 4].map((n) => ({ url: `https://sources.test/root${n}`, date: `2023-01-0${n}`, marker: `Root${n}` }));
+    const submitted = "https://submitted.test/claim";
+
+    const run = async (delayMs: number, maxProviderRequests?: number) => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const analyzed: string[] = [];
+      const slow: UpstreamSourceProposer = {
+        async analyze(document) {
+          analyzed.push(document.url);
+          if (document.url === submitted) return roots.map((page) => proposed(page.url));
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          inFlight -= 1;
+          return [];
+        },
+      };
+      const result = await traverseProvenance(
+        { seed: submittedSeed(submitted), claim: CLAIM, fabricated: FABRICATED, maxProviderRequests },
+        { fetcher: fetcher(roots, []), proposer: slow },
+      );
+      return { result, maxInFlight, analyzed };
+    };
+
+    it("are started together (bounded) without changing the outcome", async () => {
+      const concurrent = await run(20);
+      const serialLike = await run(0);
+
+      expect(concurrent.maxInFlight).toBeGreaterThan(1);
+      expect(concurrent.maxInFlight).toBeLessThanOrEqual(3);
+      expect(concurrent.analyzed).toEqual([submitted, ...roots.map((page) => page.url)]);
+      expect(concurrent.result.terminations).toEqual(serialLike.result.terminations);
+      expect(concurrent.result.candidate_matches).toEqual(serialLike.result.candidate_matches);
+      expect(concurrent.result.stats).toEqual(serialLike.result.stats);
+      expect(concurrent.result.status).toBe(serialLike.result.status);
+    });
+
+    it("never start more provider analyses than the per-call budget allows, and resume the rest", async () => {
+      const limited = await run(10, 3);
+
+      expect(limited.analyzed).toHaveLength(3); // the submitted text plus two roots; no speculative overrun
+      expect(limited.result.status).toBe("paused");
+      expect(limited.result.pending_jobs).toHaveLength(1);
+      expect(limited.result.pending_jobs[0]?.reason).toBe("rate-limit");
+    });
+
+    it("attributes a failure to its own source and still completes its peers", async () => {
+      const analyzed: string[] = [];
+      const flaky: UpstreamSourceProposer = {
+        async analyze(document) {
+          analyzed.push(document.url);
+          if (document.url === submitted) return roots.map((page) => proposed(page.url));
+          if (document.url === roots[1]!.url) throw new Error("scan timed out");
+          return [];
+        },
+      };
+      const result = await traverseProvenance(
+        { seed: submittedSeed(submitted), claim: CLAIM, fabricated: FABRICATED },
+        { fetcher: fetcher(roots, []), proposer: flaky },
+      );
+
+      expect(result.terminations.filter((entry) => entry.reason === "provider-failure").map((entry) => entry.url)).toEqual([roots[1]!.url]);
+      expect(result.terminations.filter((entry) => entry.reason === "no-proposals")).toHaveLength(3);
+    });
+  });
 });

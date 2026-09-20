@@ -303,7 +303,7 @@ function TreeView() {
       try {
         const result = await createResearch(query, { signal: controller.signal });
         setResearchId(result.id);
-        setGraphData(toGraphData(result.tree, result.edges));
+        setGraphData(toGraphData(result.tree, result.edges, result.nodes));
         setPhase("done");
       } catch (err) {
         if (controller.signal.aborted) return;

@@ -30,8 +30,11 @@ export interface GraphNode extends LineageTreeNode {
 }
 
 export interface GraphLink extends LineageTreeEdge {
-  /** The accepted compatibility-tree edge's state in the backend response. */
-  backend_status: "validated";
+  /**
+   * "validated": an accepted compatibility-tree edge. "candidate": a discovery-only match between a
+   * fetched source and the submitted text, carried by the backend as `status: "candidate"`.
+   */
+  backend_status: "validated" | "candidate";
   /** Presentation semantics derived from the backend node kind, never a validation result. */
   kind: EdgeKind;
   /**
@@ -114,10 +117,57 @@ function roleOf(node: LineageTreeNode, isRoot: boolean, isCandidate: boolean): N
   return "discovered";
 }
 
-export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = []): GraphData {
+const COMMON_WORDS = new Set(
+  "that this with from were have which their there would could about into than them then been also such when what says said will only very much more most some other these those".split(" "),
+);
+
+function distinctiveWords(text: string): string[] {
+  return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? [])].filter((word) => !COMMON_WORDS.has(word));
+}
+
+/**
+ * How much of the submitted text's distinctive wording a fetched source repeats (0-1). This is
+ * Ariadne's own plain text comparison, shown as a candidate's "match strength". It ranks nothing,
+ * gates nothing, and is not provenance confidence: acceptance is decided only by the backend validator.
+ */
+export function candidateStrength(submittedText: string, sourceText: string): number {
+  const wanted = distinctiveWords(submittedText);
+  if (wanted.length === 0) return 0;
+  const present = new Set(distinctiveWords(sourceText));
+  return Math.round((wanted.filter((word) => present.has(word)).length / wanted.length) * 100) / 100;
+}
+
+/** Shown on a candidate match: it is a proposal that a source relates to the text, never a verdict. */
+function candidateBasis(strength: number): string {
+  return `Proposed as an upstream source for the submitted text. ${Math.round(strength * 100)}% of the submitted text's distinctive words appear in this source's matched passage (a plain text comparison). Discovery only: this is not validated provenance.`;
+}
+
+/**
+ * `backendNodes` is the response's full document list. The compatibility `tree` keeps only nodes
+ * touched by a validated edge, so a fetched source matched to the submitted text (a backend
+ * `status: "candidate"` edge) is otherwise invisible. Those matches are added here as candidate
+ * nodes and links; they carry no confidence and never count as validated provenance. Their strength is a plain text overlap (see `candidateStrength`).
+ */
+export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [], backendNodes: LineageTreeNode[] = []): GraphData {
   const rootIds = new Set(tree.root_ids);
-  const rawNodesById = new Map(tree.nodes.map((node) => [node.id, node]));
-  const candidateIds = new Set<string>();
+  const treeNodeIds = new Set(tree.nodes.map((node) => node.id));
+  const backendNodesById = new Map(backendNodes.map((node) => [node.id, node]));
+
+  const candidateEdges: Array<{ source: string; target: string }> = [];
+  for (const edge of backendEdges) {
+    if (edge.status !== "candidate" || edge.source === null) continue;
+    // Both ends must be real documents, and the target must already be on the graph (the submitted text).
+    if (!treeNodeIds.has(edge.target) || !(treeNodeIds.has(edge.source) || backendNodesById.has(edge.source))) continue;
+    if (candidateEdges.some((known) => known.source === edge.source && known.target === edge.target)) continue;
+    candidateEdges.push({ source: edge.source, target: edge.target });
+  }
+  const promoted = [...new Set(candidateEdges.map((edge) => edge.source))]
+    .filter((id) => !treeNodeIds.has(id))
+    .map((id) => backendNodesById.get(id)!);
+  const graphTreeNodes = [...tree.nodes, ...promoted];
+
+  const rawNodesById = new Map(graphTreeNodes.map((node) => [node.id, node]));
+  const candidateIds = new Set<string>(candidateEdges.map((edge) => edge.source));
 
   for (const edge of tree.edges) {
     const parent = rawNodesById.get(edge.parent_id);
@@ -126,7 +176,7 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [])
     if (child?.source_kind === "submitted" && parent?.source_kind === "fetched") candidateIds.add(parent.id);
   }
 
-  const nodes: GraphNode[] = tree.nodes.map((node) => {
+  const nodes: GraphNode[] = graphTreeNodes.map((node) => {
     const is_root = rootIds.has(node.id);
     // Shallow copy: the force simulation writes x/y/vx/vy onto whatever it is handed.
     return { ...node, is_root, role: roleOf(node, is_root, candidateIds.has(node.id)) };
@@ -157,7 +207,36 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [])
       };
     });
 
-  return { nodes, links, rejectedEdges: tree.rejected_edges, excludedCandidates: tree.excluded };
+  const promotedIds = new Set(promoted.map((node) => node.id));
+  for (const { source, target } of candidateEdges) {
+    const sourceNode = rawNodesById.get(source);
+    const strength = candidateStrength(tree.seed.claim, `${sourceNode?.title ?? ""} ${sourceNode?.passage ?? ""}`);
+    links.push({
+      parent_id: source,
+      child_id: target,
+      type: "similarity",
+      confidence: strength,
+      basis: candidateBasis(strength),
+      shared_mutations: [],
+      claim_mutations: [],
+      explicit_link: false,
+      rare_shared_phrases: 0,
+      similarity: strength,
+      temporal: { parent_time: rawNodesById.get(source)?.timestamp ?? null, child_time: null, gap_days: null, ordering: "unknown" },
+      alternatives: [],
+      source,
+      target,
+      backend_status: "candidate",
+      kind: "candidate_match",
+    });
+  }
+
+  return {
+    nodes,
+    links,
+    rejectedEdges: tree.rejected_edges,
+    excludedCandidates: tree.excluded.filter((excluded) => !promotedIds.has(excluded.id)),
+  };
 }
 
 /** Tolerates force-graph swapping link endpoints from ids to node objects after layout. */
