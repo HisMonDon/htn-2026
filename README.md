@@ -18,6 +18,8 @@ Fill in `.env` locally. It is git-ignored. Only `.env.example` is committed.
 | `BROWSERBASE_API_KEY` | Browserbase session and Stagehand Model Gateway (no separate LLM key needed) |
 | `BROWSERBASE_PROJECT_ID` | Optional; Browserbase infers the project from the key |
 | `GPTZERO_API_KEY` | GPTZero `POST /v2/predict/text` |
+| `BRAVE_SEARCH_API_KEY` | Optional. Enables the web-retrieval proposer that runs alongside GPTZero (Brave Search API). Unset: GPTZero-only discovery. Search hits are only candidates; they are fetched and validated like any GPTZero proposal |
+| `WEB_SEARCH_MAX_QUERIES`, `WEB_SEARCH_RESULTS_PER_QUERY`, `WEB_SEARCH_MAX_CANDIDATES`, `WEB_SEARCH_TIMEOUT_MS` | Per-source search bounds (defaults 5, 4, 10, 10000) |
 | `USE_MOCKS` | `true`: offline test operator and mock GPTZero. Anything else: real Browserbase and GPTZero, no silent fallback |
 | `CONTROLLED_TARGET_URL` | Browser-facing URL of the controlled target. Must be a public tunnel for Browserbase |
 | `STAGEHAND_MODEL` | Optional model, e.g. `anthropic/claude-sonnet-4-6`; omitted lets Model Gateway choose |

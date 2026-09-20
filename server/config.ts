@@ -3,6 +3,14 @@ export interface Config {
   browserbaseApiKey: string | null;
   browserbaseProjectId: string | null;
   gptzeroApiKey: string | null;
+  /** Independent web-retrieval proposer that runs alongside GPTZero. No apiKey: GPTZero-only discovery. */
+  webSearch: {
+    apiKey: string | null;
+    maxQueries: number;
+    resultsPerQuery: number;
+    maxCandidates: number;
+    timeoutMs: number;
+  };
   /** Optional Stagehand model, e.g. "anthropic/claude-sonnet-4-6". Omitted lets Model Gateway choose. */
   stagehandModel: string | null;
   /** Browserbase session lifetime in seconds (covers the gap while a human reviews the draft). */
@@ -56,6 +64,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     browserbaseApiKey: nonEmpty(env.BROWSERBASE_API_KEY),
     browserbaseProjectId: nonEmpty(env.BROWSERBASE_PROJECT_ID),
     gptzeroApiKey: nonEmpty(env.GPTZERO_API_KEY),
+    webSearch: {
+      apiKey: nonEmpty(env.BRAVE_SEARCH_API_KEY),
+      maxQueries: int(env.WEB_SEARCH_MAX_QUERIES, 5),
+      resultsPerQuery: int(env.WEB_SEARCH_RESULTS_PER_QUERY, 4),
+      maxCandidates: int(env.WEB_SEARCH_MAX_CANDIDATES, 10),
+      timeoutMs: int(env.WEB_SEARCH_TIMEOUT_MS, 10_000),
+    },
     stagehandModel: nonEmpty(env.STAGEHAND_MODEL),
     browserbaseSessionTimeoutS: int(env.BROWSERBASE_SESSION_TIMEOUT_S, 900),
     apiPort: int(env.API_PORT, 4000),

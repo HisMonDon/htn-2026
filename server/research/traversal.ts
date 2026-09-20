@@ -12,6 +12,12 @@ import { ACCEPT_THRESHOLD } from "./tree";
 export interface UpstreamProposal extends SourceReference {
   /** Optional search/provider publication date; normal ingestion still ranks stronger page evidence first. */
   published?: string | null;
+  /**
+   * Which discovery channels proposed this source (e.g. "gptzero", "web-search"). Recorded on the
+   * fetched document's `discovered_via` for display and audit only; scoring never reads it, and it
+   * is not evidence that a provenance edge exists.
+   */
+  discovered_by?: readonly string[];
 }
 
 /**
@@ -506,7 +512,8 @@ export async function traverseProvenance(
           continue;
         }
         fetched += 1;
-        rawDocuments.push(ingested.document);
+        const channels = (proposal.discovered_by ?? []).filter((channel) => !ingested.document.discovered_via.includes(channel));
+        rawDocuments.push(channels.length ? { ...ingested.document, discovered_via: [...ingested.document.discovered_via, ...channels] } : ingested.document);
         canonicalized = canonicalizeDocuments(rawDocuments);
         documents = canonicalized.documents;
         byUrl = urlToKey();
