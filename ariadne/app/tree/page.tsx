@@ -310,18 +310,35 @@ function TreeView() {
       setTimeout(() => setStatus("Deploying research spiders..."), 2000),
       setTimeout(() => setStatus("Scoring candidate parents..."), 5000),
       setTimeout(() => setStatus("Reconstructing propagation tree..."), 8000),
+      setTimeout(() => setStatus("Cross-referencing citation graph..."), 15000),
+      setTimeout(() => setStatus("Finalizing provenance map..."), 24000),
     ];
+
+    // Debug-only demo path calls the real API purely to exercise it — the response is discarded
+    // either way — but always holds the loading screen open for this long so the timing is
+    // consistent to watch/test, regardless of how fast or slow the real call actually returns.
+    const DEMO_MIN_LOADING_MS = 33000;
+    const holdRemaining = (startedAt: number) =>
+      new Promise<void>((resolve) => {
+        const remaining = DEMO_MIN_LOADING_MS - (performance.now() - startedAt);
+        if (remaining <= 0 || controller.signal.aborted) { resolve(); return; }
+        const id = setTimeout(resolve, remaining);
+        controller.signal.addEventListener("abort", () => { clearTimeout(id); resolve(); }, { once: true });
+      });
 
     const run = async () => {
       setPhase("researching");
       setError(null);
       setIsMock(false);
       setStatus("Initializing Ariadne Protocol...");
+      const startedAt = performance.now();
       try {
         const result = await createResearch(query, { signal: controller.signal });
         if (isDemoQuery) {
           // Debug-only: exercise the real API call and its loading time, but the demo's
           // hardcoded graph is what renders regardless of what came back.
+          await holdRemaining(startedAt);
+          if (controller.signal.aborted) return;
           setPhase("done");
           return;
         }
@@ -332,6 +349,8 @@ function TreeView() {
         if (controller.signal.aborted) return;
         if (isDemoQuery) {
           // Same debug-only intent: the call failed, but that has no bearing on the demo.
+          await holdRemaining(startedAt);
+          if (controller.signal.aborted) return;
           setPhase("done");
           return;
         }

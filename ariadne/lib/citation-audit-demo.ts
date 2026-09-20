@@ -98,7 +98,7 @@ function backendEdge(edge: LineageTreeEdge, status: DemoEdgeStatus): BackendEdge
   } as unknown as BackendEdge;
 }
 
-const REVIEWER = "Edlyn To";
+const REVIEWER = "GPT ZERO:";
 
 const nodes: LineageTreeNode[] = [
   demoNode(1, {
@@ -179,9 +179,9 @@ const nodes: LineageTreeNode[] = [
     passage: "Cited within the benchmark-model paper's own references as the optimizer used for its control formulation.",
     outbound_links: [],
     fabricated_citations: [
-      `${REVIEWER} (2:14 AM): Source is not found. We did not find a likely match through online search.`,
-      `${REVIEWER} (2:41 AM): Marked as resolved.`,
-      `${REVIEWER} (2:41 AM): Re-opened.`,
+      `$Source is not found. We did not find a likely match through online search.`,
+      `$Marked as resolved.`,
+      `$Re-opened.`,
     ],
     is_seed: false,
   }),
@@ -195,7 +195,7 @@ const nodes: LineageTreeNode[] = [
     passage: "Cited within the benchmark-model paper's own references for European renewable-energy deployment context.",
     outbound_links: [],
     fabricated_citations: [
-      `${REVIEWER} (2:37 AM): We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Europe. International Renewable Energy Agency (IRENA). https://www.irena.org/How-we-work/Europe.`,
+      ` We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Europe. International Renewable Energy Agency (IRENA). https://www.irena.org/How-we-work/Europe.`,
     ],
     is_seed: false,
   }),
@@ -209,7 +209,7 @@ const nodes: LineageTreeNode[] = [
     passage: "Cited within the benchmark-model paper's own references for the 2016 South Australia black-system event.",
     outbound_links: [],
     fabricated_citations: [
-      `${REVIEWER} (2:38 AM): We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Review of the System Black Event in South Australia on 28.... https://www.aemc.gov.au/markets-reviews-advice/review-of-the-system-black-event-in-south-australia.`,
+      `We are not sure if we found the source. There are many differences between the citation and the source matched. Most similar source found: Review of the System Black Event in South Australia on 28.... https://www.aemc.gov.au/markets-reviews-advice/review-of-the-system-black-event-in-south-australia.`,
     ],
     is_seed: false,
   }),

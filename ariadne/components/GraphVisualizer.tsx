@@ -191,13 +191,14 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.closePath();
 }
 
-/** Tints a card's dark background toward a demo-supplied accent color instead of the usual role hue. */
-function hexToRgba(hex: string, alpha: number): string {
+/** Same accent color, scaled brighter/darker and kept fully opaque — a shaded gradient stop. */
+function hexShade(hex: string, factor: number): string {
   const clean = hex.replace("#", "");
-  const r = parseInt(clean.slice(0, 2), 16);
-  const g = parseInt(clean.slice(2, 4), 16);
-  const b = parseInt(clean.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  const clamp = (channel: number) => Math.max(0, Math.min(255, Math.round(channel * factor)));
+  const r = clamp(parseInt(clean.slice(0, 2), 16));
+  const g = clamp(parseInt(clean.slice(2, 4), 16));
+  const b = clamp(parseInt(clean.slice(4, 6), 16));
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function smoothRange(value: number, start: number, end: number) {
@@ -768,7 +769,7 @@ export default function GraphVisualizer({ data, specular, nodeAccentColors }: Gr
         fill.addColorStop(
           0,
           accentColor
-            ? hexToRgba(accentColor, a.hover > 0.5 ? 0.42 : 0.34)
+            ? hexShade(accentColor, a.hover > 0.5 ? 1.08 : 1)
             : submitted
               ? (a.hover > 0.5 ? "rgba(25, 49, 82, 0.98)" : "rgba(17, 35, 62, 0.96)")
               : (a.hover > 0.5 ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)")
@@ -776,7 +777,7 @@ export default function GraphVisualizer({ data, specular, nodeAccentColors }: Gr
         fill.addColorStop(
           1,
           accentColor
-            ? hexToRgba(accentColor, a.hover > 0.5 ? 0.24 : 0.18)
+            ? hexShade(accentColor, a.hover > 0.5 ? 0.82 : 0.74)
             : submitted
               ? (a.hover > 0.5 ? "rgba(13, 28, 52, 0.98)" : "rgba(9, 21, 40, 0.96)")
               : (a.hover > 0.5 ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)")
