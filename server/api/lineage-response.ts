@@ -129,9 +129,11 @@ export function serializeTraversal(result: RecursiveProvenanceTraversal, context
     } catch {
       warnings.push({ stage: "validation", source: null, category: "inspection-unavailable", message: "Supplementary edge inspection is unavailable; traversal evidence is retained.", recoverable: false });
     }
+    // provenance_status distinguishes strict-validated edges from exploratory-only "probable"
+    // edges; never collapse the two into a single "validated" status on the wire.
     return {
-      id: edgeId(x.parent_id, x.child_id, "validated"), source: x.parent_id, target: x.child_id,
-      reference_url: byId.get(x.parent_id)?.url ?? null, status: "validated", ariadne_score: x.confidence,
+      id: edgeId(x.parent_id, x.child_id, x.provenance_status), source: x.parent_id, target: x.child_id,
+      reference_url: byId.get(x.parent_id)?.url ?? null, status: x.provenance_status, ariadne_score: x.confidence,
       score_method: "traversal-scoreEdge", type: x.type,
       evidence: { basis: x.basis, explicit_link: x.explicit_link, shared_mutations: x.shared_mutations, rare_shared_phrases: x.rare_shared_phrases, similarity: x.similarity, temporal: x.temporal },
       inspection, claim_mutations: x.claim_mutations, recursed: x.recursed,

@@ -45,30 +45,45 @@ const endpointFields = {
   reference_url: z.string().nullable(),
 };
 
+const validatedEvidenceFields = {
+  ariadne_score: z.number().min(0).max(1),
+  score_method: z.literal("traversal-scoreEdge"),
+  type: TreeEdge.shape.type,
+  evidence: z.object({
+    basis: z.string(),
+    explicit_link: z.boolean(),
+    shared_mutations: z.array(z.string()),
+    rare_shared_phrases: z.number(),
+    similarity: z.number(),
+    temporal: TemporalEvidence,
+  }),
+  inspection: z.object({
+    validator: z.literal("lineage-deterministic-v1"),
+    role: z.literal("supplementary-inspection"),
+    signals: z.array(ValidationSignal),
+    evidence: ValidationEvidence,
+  }).nullable(),
+  claim_mutations: z.array(ClaimMutation),
+  recursed: z.boolean(),
+};
+
 export const AriadneEdge = z.discriminatedUnion("status", [
   z.object({
     ...endpointFields,
+    ...validatedEvidenceFields,
     source: z.string(),
     status: z.literal("validated"),
-    ariadne_score: z.number().min(0).max(1),
-    score_method: z.literal("traversal-scoreEdge"),
-    type: TreeEdge.shape.type,
-    evidence: z.object({
-      basis: z.string(),
-      explicit_link: z.boolean(),
-      shared_mutations: z.array(z.string()),
-      rare_shared_phrases: z.number(),
-      similarity: z.number(),
-      temporal: TemporalEvidence,
-    }),
-    inspection: z.object({
-      validator: z.literal("lineage-deterministic-v1"),
-      role: z.literal("supplementary-inspection"),
-      signals: z.array(ValidationSignal),
-      evidence: ValidationEvidence,
-    }).nullable(),
-    claim_mutations: z.array(ClaimMutation),
-    recursed: z.boolean(),
+  }),
+  z.object({
+    ...endpointFields,
+    ...validatedEvidenceFields,
+    source: z.string(),
+    /**
+     * Exploratory-mode-only: meaningful provenance evidence exists (a link, shared citation, or
+     * rare shared phrasing) but the edge falls below the strict validated threshold. This is NOT
+     * validated provenance and must never be presented or serialized as "validated".
+     */
+    status: z.literal("probable"),
   }),
   z.object({
     ...endpointFields,
@@ -76,7 +91,16 @@ export const AriadneEdge = z.discriminatedUnion("status", [
     ariadne_score: z.number().min(0).max(1).nullable(),
     score_method: z.literal("traversal-scoreEdge"),
     reason: z.string(),
-    termination: z.enum(["invalid-proposal", "fetch-failure", "duplicate-source", "cycle", "already-visited", "already-accepted", "validation-rejected"]),
+    termination: z.enum([
+      "invalid-proposal",
+      "fetch-failure",
+      "duplicate-source",
+      "cycle",
+      "already-visited",
+      "already-accepted",
+      "validation-rejected",
+      "exploratory-branch-cap",
+    ]),
   }),
   z.object({ ...endpointFields, status: z.literal("candidate"), reason: z.string() }),
 ]);
@@ -85,6 +109,8 @@ export type AriadneEdge = z.infer<typeof AriadneEdge>;
 export const AriadneExecution = z.object({
   proposer: z.enum(["live", "cached_demo_fallback", "mock"]),
   fallbacks: z.array(z.object({ source_id: z.string(), captured_at: z.iso.datetime({ offset: true }) })),
+  /** "exploratory" means this response may include "probable" edges; see AriadneEdge.status. */
+  provenance_mode: z.enum(["strict", "exploratory"]),
 });
 export type AriadneExecution = z.infer<typeof AriadneExecution>;
 

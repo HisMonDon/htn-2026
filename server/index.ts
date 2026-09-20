@@ -18,7 +18,7 @@ const orchestrator = new Orchestrator({
   contactEmail: config.contactEmail,
 });
 const detector = createDetector(config);
-const lineage = createLineageController(createLineageDeps(config), config.useMocks ? "mock" : "live");
+const lineage = createLineageController(createLineageDeps(config), config.useMocks ? "mock" : "live", () => new Date(), config.provenanceMode);
 const service = new LineageService({ config, orchestrator, detector, seed: [seed as never] });
 const handle = createApi(
   service,

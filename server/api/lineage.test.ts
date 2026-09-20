@@ -81,7 +81,7 @@ describe("recursive research HTTP contract", () => {
     const seed = extractDocument({ ...pages[0]!, fabricated, claimTerms: [], discoveredVia: "api-seed" });
     const direct = await traverseProvenance({ seed, claim: shared, fabricated }, deps);
     expect(body.status).toBe("complete");
-    expect(body.execution).toEqual({ proposer: "mock", fallbacks: [] });
+    expect(body.execution).toEqual({ proposer: "mock", fallbacks: [], provenance_mode: "strict" });
     expect(body.edges).toHaveLength(2);
     expect(body.tree.edges).toHaveLength(direct.accepted_edges.length);
     for (const [index, x] of body.edges.entries()) {
@@ -368,7 +368,7 @@ describe("recursive research HTTP contract", () => {
     const seed = extractDocument({ ...pages[0]!, fabricated, claimTerms: [], discoveredVia: "api-seed" });
     const direct = await traverseProvenance({ seed, claim: shared, fabricated }, { proposer: proposer(), fetcher: new CorpusFetcher(pages) });
     direct.accepted_edges[0]!.confidence = 0.456;
-    const body = serializeTraversal(direct, { id: "synthetic", input: request, seed, execution: { proposer: "mock", fallbacks: [] }, generatedAt: fixedNow().toISOString() });
+    const body = serializeTraversal(direct, { id: "synthetic", input: request, seed, execution: { proposer: "mock", fallbacks: [], provenance_mode: "strict" }, generatedAt: fixedNow().toISOString() });
     expect(body.edges[0]).toMatchObject({ status: "validated", ariadne_score: 0.456, score_method: "traversal-scoreEdge" });
     expect(body.tree.edges[0]?.confidence).toBe(0.456);
   });

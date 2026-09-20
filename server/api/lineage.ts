@@ -46,12 +46,20 @@ export function createLineageDeps(config: { useMocks: boolean; gptzeroApiKey: st
   return { proposer, fetcher: new DirectHttpFetcher() };
 }
 
-export function createLineageController(deps: TraverseProvenanceDeps, mode: "live" | "mock", now = () => new Date()) {
+export function createLineageController(
+  deps: TraverseProvenanceDeps,
+  mode: "live" | "mock",
+  now = () => new Date(),
+  /** Defaults to "strict". Only the demo entrypoint should ever pass "exploratory". */
+  provenanceMode: "strict" | "exploratory" = "strict",
+) {
   const runs = new Map<string, StoredRun>();
 
   async function execute(input: AriadneRequest, id: string, previous?: StoredRun): Promise<AriadneResponse> {
     let seed = previous?.seed ?? null;
-    const execution: AriadneExecution = previous ? structuredClone(previous.response.execution) : { proposer: mode, fallbacks: [] };
+    const execution: AriadneExecution = previous
+      ? structuredClone(previous.response.execution)
+      : { proposer: mode, fallbacks: [], provenance_mode: provenanceMode };
     const fabricated = input.fabricated_citations ?? [];
     const maxDepth = input.max_depth ?? 5;
     let traversal: RecursiveProvenanceTraversal | null = null;
@@ -77,7 +85,7 @@ export function createLineageController(deps: TraverseProvenanceDeps, mode: "liv
       if (seed) startProviderRun(deps.proposer, input.max_provider_requests ?? 10);
       if (seed) traversal = await traverseProvenance({
         seed, claim: input.claim, fabricated, maxDepth, maxProviderRequests: input.max_provider_requests,
-        checkpoint: previous?.traversal.checkpoint,
+        checkpoint: previous?.traversal.checkpoint, provenanceMode,
       }, {
         ...deps,
         proposer: {

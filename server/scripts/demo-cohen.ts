@@ -49,7 +49,7 @@ function printResult(result: RecursiveProvenanceTraversal): void {
   for (const edge of result.accepted_edges) {
     const parent = byId.get(edge.parent_id);
     const child = byId.get(edge.child_id);
-    console.log(`  ${parent?.url} -> ${child?.url}  [${edge.type}, confidence ${edge.confidence}]`);
+    console.log(`  ${parent?.url} -> ${child?.url}  [${edge.provenance_status}, ${edge.type}, confidence ${edge.confidence}]`);
     console.log(`    basis: ${edge.basis}`);
     if (edge.shared_mutations.length) console.log(`    shared fabrications: ${edge.shared_mutations.join(", ")}`);
     console.log(`    temporal: ${edge.temporal.parent_time ?? "unknown"} -> ${edge.temporal.child_time ?? "unknown"} (${edge.temporal.ordering})`);
@@ -93,10 +93,14 @@ const resolver: SourceResolver = new SearchSourceResolver(search);
 const proposer: UpstreamSourceProposer = useMocks ? new OutboundLinkProposer() : createBibliographyProposer(config);
 
 console.log(`mode: ${useMocks ? "offline (corpus fetch/resolve, link-following proposer)" : "live (GPTZero bibliography scan, direct HTTP fetch)"}`);
+console.log(`provenance mode: ${config.provenanceMode}`);
 console.log(`seed: ${seed.url}`);
 console.log(`claim: ${CLAIM}\n`);
 
-const result = await traverseProvenance({ seed, claim: CLAIM, fabricated: FABRICATED }, { proposer, fetcher, resolver });
+const result = await traverseProvenance(
+  { seed, claim: CLAIM, fabricated: FABRICATED, provenanceMode: config.provenanceMode },
+  { proposer, fetcher, resolver },
+);
 
 if (process.argv.includes("--json")) {
   console.log(JSON.stringify(result, null, 2));

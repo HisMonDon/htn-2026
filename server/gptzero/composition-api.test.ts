@@ -132,7 +132,7 @@ describe("POST /api/research with the claim-level endpoint behind the proposer a
   it("keeps the execution block stable and says nothing about which GPTZero endpoint was used", async () => {
     const post = await start(composedProposer([], { bibliography: 0, claim: 0 }));
     const body = AriadneResponse.parse(await (await post()).json());
-    expect(body.execution).toEqual({ proposer: "live", fallbacks: [] });
+    expect(body.execution).toEqual({ proposer: "live", fallbacks: [], provenance_mode: "strict" });
   });
 
   it("does not issue a claim-level request when the bibliography scan already proposed candidates", async () => {

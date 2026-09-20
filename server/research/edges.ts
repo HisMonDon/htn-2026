@@ -89,6 +89,21 @@ export interface ScoredEdge {
   reasons: string[];
   /** Set when the edge can never be accepted, e.g. wrong temporal order. */
   impossible: string | null;
+  /**
+   * Confidence before the CAP_WEAK clamp that keeps unsubstantiated similarity out of the strict
+   * validated tier. Chronology-derived caps (same-time, unknown order) still apply: those guard
+   * against claiming a direction the evidence doesn't support, not against weak-but-real evidence.
+   * Only meaningful in exploratory mode; strict acceptance never reads this field.
+   */
+  exploratory_confidence: number;
+  /**
+   * True when at least one non-similarity signal is present: an explicit link, any shared
+   * fabricated citation, a shared citation misspelling, or a rare shared phrase found in no other
+   * candidate parent. Generic word-overlap similarity alone never sets this. Exploratory acceptance
+   * requires this to be true; provider metadata (search rank, GPTZero confidence, etc.) never
+   * contributes to it because it is never a scoring input in the first place.
+   */
+  has_meaningful_evidence: boolean;
 }
 
 const WEIGHT_LINK = 0.6;
@@ -101,6 +116,19 @@ const CAP_WEAK = 0.25;
 const CAP_UNKNOWN_ORDER = 0.3;
 const CAP_SAME_TIME = 0.6;
 export const MIN_COVERAGE = 2 / 3;
+
+/**
+ * Exploratory-mode-only acceptance floor, lower than the strict `ACCEPT_THRESHOLD` (0.35, in
+ * ./tree.ts). Derived from the weight constants above rather than picked arbitrarily: it sits
+ * just above what any *single* weak signal can contribute alone (a lone rare phrase tops out at
+ * CAP_PHRASES=0.3 only with 6+ unique phrases, and typically contributes ~0.1-0.15; similarity
+ * alone never exceeds CAP_SIMILARITY*noisyOr=0.15), but below what two independent weak signals
+ * (e.g. one shared phrase + moderate similarity, or a single shared citation-spelling variant)
+ * combine to via noisy-OR (commonly ~0.20-0.30). This keeps single-signal noise out while letting
+ * genuinely corroborated-but-thin candidates recurse. Combined with `has_meaningful_evidence`,
+ * pure content similarity can never cross this floor on its own.
+ */
+export const EXPLORATORY_THRESHOLD = 0.2;
 
 function noisyOr(weights: number[]): number {
   return 1 - weights.reduce((product, weight) => product * (1 - weight), 1);
@@ -201,7 +229,17 @@ export function scoreEdge(parent: CandidateDocument, child: CandidateDocument, c
       : p.exact
         ? `${parent.id} (${day(p.claimed!)}) was published after ${child.id} (${day(c.claimed!)})`
         : `${parent.id} links to material from ${day(p.effective!)}, after ${child.id} (${day(c.claimed!)})`;
-    return { parent_id: parent.id, child_id: child.id, confidence: 0, strong: false, signals, reasons: [why], impossible: why };
+    return {
+      parent_id: parent.id,
+      child_id: child.id,
+      confidence: 0,
+      strong: false,
+      signals,
+      reasons: [why],
+      impossible: why,
+      exploratory_confidence: 0,
+      has_meaningful_evidence: false,
+    };
   }
 
   // Shared fabricated citations place both documents in the same lineage but rarely single out
@@ -258,6 +296,13 @@ export function scoreEdge(parent: CandidateDocument, child: CandidateDocument, c
     confidence = Math.min(confidence, CAP_UNKNOWN_ORDER);
     reasons.push(p.conflict ? `order unknown: ${parent.id} ${p.conflict}` : "order unknown: no trustworthy timestamp");
   }
+  // Chronology caps (same-time/unknown, above) bound what direction the evidence supports and
+  // apply in both modes. The weak-evidence cap below exists only to keep unsubstantiated
+  // similarity out of the strict validated tier, so exploratory mode reads confidence from before
+  // this point instead.
+  const exploratoryConfidence = confidence;
+  const hasMeaningfulEvidence = signals.explicit_link || coverage > 0 || sharedVariants.length > 0 || unique > 0;
+
   if (!signals.explicit_link && coverage < MIN_COVERAGE && sharedVariants.length === 0) {
     confidence = Math.min(confidence, CAP_WEAK);
     reasons.push(
@@ -277,5 +322,7 @@ export function scoreEdge(parent: CandidateDocument, child: CandidateDocument, c
     signals,
     reasons,
     impossible: null,
+    exploratory_confidence: round(exploratoryConfidence),
+    has_meaningful_evidence: hasMeaningfulEvidence,
   };
 }

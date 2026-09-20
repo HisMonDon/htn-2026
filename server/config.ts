@@ -1,5 +1,11 @@
 export interface Config {
   useMocks: boolean;
+  /**
+   * "strict" (default) gates traversal on the existing validated threshold only. "exploratory" also
+   * accepts lower-confidence, evidence-backed edges as "probable" so recursion can go deeper for a
+   * demo. Never defaults to "exploratory": production behavior is unchanged unless this is set.
+   */
+  provenanceMode: "strict" | "exploratory";
   browserbaseApiKey: string | null;
   browserbaseProjectId: string | null;
   gptzeroApiKey: string | null;
@@ -61,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .filter(Boolean);
   return {
     useMocks: flag(env.USE_MOCKS),
+    provenanceMode: nonEmpty(env.PROVENANCE_MODE) === "exploratory" ? "exploratory" : "strict",
     browserbaseApiKey: nonEmpty(env.BROWSERBASE_API_KEY),
     browserbaseProjectId: nonEmpty(env.BROWSERBASE_PROJECT_ID),
     gptzeroApiKey: nonEmpty(env.GPTZERO_API_KEY),

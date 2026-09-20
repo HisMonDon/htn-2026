@@ -1,7 +1,16 @@
 import type { TreeEdge } from "../../shared/tree";
 import { canonicalizeDocuments } from "./canonicalize";
 import { claimTerms } from "./discovery";
-import { computeTimings, MIN_COVERAGE, ordering, scoreEdge, temporalEvidence as temporal, type ScoredEdge, type Timing } from "./edges";
+import {
+  computeTimings,
+  EXPLORATORY_THRESHOLD,
+  MIN_COVERAGE,
+  ordering,
+  scoreEdge,
+  temporalEvidence as temporal,
+  type ScoredEdge,
+  type Timing,
+} from "./edges";
 import { canonicalUrl, type CandidateDocument } from "./extract";
 import { ingestSourceReference, type IngestionFailure, type IngestionResult } from "./ingestion";
 import { analyzeClaimMutations } from "./mutations";
@@ -57,6 +66,14 @@ function isPendingAnalysis(analysis: UpstreamAnalysis): analysis is PendingUpstr
   return !isProposalList(analysis) && analysis.status === "pending";
 }
 
+/**
+ * "strict" (default): only edges that pass the existing validated threshold are accepted, exactly
+ * as before this mode existed. "exploratory": edges that fail that threshold but carry meaningful,
+ * non-similarity evidence and clear a lower floor are accepted as "probable" and still recursed
+ * into, bounded by MAX_PROBABLE_CHILDREN_PER_NODE. Never "exploratory" unless the caller opts in.
+ */
+export type ProvenanceMode = "strict" | "exploratory";
+
 export type SourceTerminationReason =
   | "no-proposals"
   | "max-depth"
@@ -73,7 +90,9 @@ export type ProposedEdgeTerminationReason =
   | "cycle"
   | "already-visited"
   | "already-accepted"
-  | "validation-rejected";
+  | "validation-rejected"
+  /** Exploratory mode only: this node already has MAX_PROBABLE_CHILDREN_PER_NODE probable parents. */
+  | "exploratory-branch-cap";
 
 export interface SourceTermination {
   source_id: string;
@@ -118,6 +137,12 @@ export interface TraversalDiagnostic {
 export interface AcceptedProposedEdge extends TreeEdge {
   /** True only for the first accepted route that schedules this source for expansion. */
   recursed: boolean;
+  /**
+   * "validated": passes the strict deterministic threshold in both modes.
+   * "probable": exploratory-mode-only acceptance below that threshold, on meaningful evidence.
+   * Never conflate the two when serializing: a probable edge is not validated provenance.
+   */
+  provenance_status: "validated" | "probable";
 }
 
 /**
@@ -175,6 +200,8 @@ export interface TraverseProvenanceInput {
   maxProviderRequests?: number;
   /** Optional prior state returned when a provider job or the local request budget paused work. */
   checkpoint?: TraversalCheckpoint | null;
+  /** Defaults to "strict". Set to "exploratory" only for the demo profile; never in production. */
+  provenanceMode?: ProvenanceMode;
 }
 
 export interface TraverseProvenanceDeps {
@@ -196,6 +223,7 @@ export interface AcceptedTraversalRecord {
   parentTiming: Timing;
   childTiming: Timing;
   recursed: boolean;
+  status: "validated" | "probable";
 }
 
 interface CandidateMatchRecord {
@@ -221,6 +249,12 @@ export interface TraversalCheckpoint {
 const ACQUISITION_CONCURRENCY = 4;
 /** How many same-depth sources have a provider analysis in flight at once (GPTZero allows ~10 scans/min). */
 const ANALYSIS_CONCURRENCY = 3;
+/**
+ * Exploratory mode only: how many probable (non-strict) parents a single child may recurse into.
+ * Kept small so a richer investigative tree doesn't turn into unbounded branching from every weak
+ * candidate; validated parents are never subject to this cap.
+ */
+const MAX_PROBABLE_CHILDREN_PER_NODE = 3;
 
 function keyOf(document: CandidateDocument): string {
   return document.content_fingerprint;
@@ -272,12 +306,14 @@ function treeEdge(
   parentTiming: Timing,
   childTiming: Timing,
   recursed: boolean,
+  status: "validated" | "probable",
 ): AcceptedProposedEdge {
+  const confidence = status === "probable" ? score.exploratory_confidence : score.confidence;
   return {
     parent_id: parent.id,
     child_id: child.id,
-    type: (score.signals.explicit_link || score.signals.coverage >= MIN_COVERAGE) && score.confidence >= 0.5 ? "propagation" : "similarity",
-    confidence: score.confidence,
+    type: (score.signals.explicit_link || score.signals.coverage >= MIN_COVERAGE) && confidence >= 0.5 ? "propagation" : "similarity",
+    confidence,
     basis: score.reasons.join("; "),
     shared_mutations: [...score.signals.shared_fabricated, ...score.signals.shared_variants],
     claim_mutations: analyzeClaimMutations(parent, child),
@@ -287,11 +323,16 @@ function treeEdge(
     temporal: temporal(parentTiming, childTiming, score.signals.ordering),
     alternatives: [],
     recursed,
+    provenance_status: status,
   };
 }
 
-function rejectionReason(score: ScoredEdge): string {
+function rejectionReason(score: ScoredEdge, mode: ProvenanceMode): string {
   if (score.impossible) return score.impossible;
+  if (mode === "exploratory") {
+    if (!score.has_meaningful_evidence) return "no meaningful provenance signal (link, shared citation, or rare shared phrasing); similarity alone is not evidence";
+    return `exploratory confidence ${score.exploratory_confidence} below ${EXPLORATORY_THRESHOLD}`;
+  }
   if (!score.strong) return `insufficient evidence: ${score.reasons.at(-1) ?? "the deterministic scorer did not establish propagation"}`;
   return `confidence ${score.confidence} below ${ACCEPT_THRESHOLD}`;
 }
@@ -305,6 +346,7 @@ export async function traverseProvenance(
   input: TraverseProvenanceInput,
   deps: TraverseProvenanceDeps,
 ): Promise<RecursiveProvenanceTraversal> {
+  const mode: ProvenanceMode = input.provenanceMode ?? "strict";
   const maxDepth = input.maxDepth ?? 5;
   if (!Number.isInteger(maxDepth) || maxDepth < 0) throw new Error("maxDepth must be a non-negative integer");
   const maxProviderRequests = input.maxProviderRequests ?? 10;
@@ -521,6 +563,7 @@ export async function traverseProvenance(
 
     let acceptedForSource = 0;
     let candidateRootsForSource = 0;
+    let probableForSource = 0;
     for (const proposal of sortedProposals) {
       const requestedUrl = proposalUrl(proposal);
       const reference = proposalLabel(proposal) || "unidentified upstream source";
@@ -661,13 +704,35 @@ export async function traverseProvenance(
         (candidate) => candidate.id !== currentChild.id && ordering(candidate, currentChild, timings) !== "impossible",
       );
       const score = scoreEdge(parent, currentChild, { timings, eligibleParents });
-      if (score.impossible || !score.strong || score.confidence < ACCEPT_THRESHOLD) {
+      const validated = !score.impossible && score.strong && score.confidence >= ACCEPT_THRESHOLD;
+      let status: "validated" | "probable" | null = validated ? "validated" : null;
+      if (
+        !status &&
+        mode === "exploratory" &&
+        !score.impossible &&
+        score.has_meaningful_evidence &&
+        score.exploratory_confidence >= EXPLORATORY_THRESHOLD
+      ) {
+        if (probableForSource >= MAX_PROBABLE_CHILDREN_PER_NODE) {
+          rejected.push({
+            parent_url: parent.url,
+            parent_id: parent.id,
+            child_id: currentChild.id,
+            confidence: score.exploratory_confidence,
+            reason: `exploratory branch cap reached (${MAX_PROBABLE_CHILDREN_PER_NODE} probable parents already accepted for this source)`,
+            termination: "exploratory-branch-cap",
+          });
+          continue;
+        }
+        status = "probable";
+      }
+      if (!status) {
         rejected.push({
           parent_url: parent.url,
           parent_id: parent.id,
           child_id: currentChild.id,
           confidence: score.confidence,
-          reason: rejectionReason(score),
+          reason: rejectionReason(score, mode),
           termination: "validation-rejected",
         });
         continue;
@@ -682,8 +747,10 @@ export async function traverseProvenance(
         parentTiming: timings.get(parent.id)!,
         childTiming: timings.get(currentChild.id)!,
         recursed,
+        status,
       });
       acceptedForSource += 1;
+      if (status === "probable") probableForSource += 1;
       if (recursed) {
         sourceState.set(parentKey, "queued");
         queue.push({ key: parentKey, depth: current.depth + 1, job_id: null });
@@ -746,6 +813,7 @@ export async function traverseProvenance(
         edge.parentTiming,
         edge.childTiming,
         edge.recursed,
+        edge.status,
       ),
     ),
     candidate_matches: candidateMatches.map((edge) => ({

@@ -652,3 +652,155 @@ describe("proposal metadata isolation", () => {
     });
   });
 });
+
+describe("exploratory provenance mode", () => {
+  /**
+   * A long filler sentence, shared verbatim between a child and one candidate parent and nowhere
+   * else, so it contributes several rare/unique 6-word shingles (evidence), not just generic
+   * similarity. Parameterized so each candidate in the branch-cap test gets its own unique phrase.
+   */
+  const distinctivePhrase = (tag: string) =>
+    `extended analysis follows the committee reviewed several confidential internal memoranda ${tag} before reaching a quiet determination`;
+
+  /** Child cites both fabricated cases; a weak candidate parent shares only one (coverage 0.5, below MIN_COVERAGE). */
+  function weakChild(url: string, date: string, links: string[] = []): Page {
+    return { url, date, marker: "Child", links, body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${distinctivePhrase("shared")}.` };
+  }
+  function weakParent(url: string, date: string, tag = "shared"): Page {
+    return { url, date, marker: "Parent", body: `${FABRICATED[0]}. ${distinctivePhrase(tag)}.` };
+  }
+
+  it("keeps a below-threshold-but-evidenced edge rejected in strict mode (default)", async () => {
+    const child = weakChild("https://sources.test/weak-child", "2023-01-03");
+    const parent = weakParent("https://sources.test/weak-parent", "2023-01-02");
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED },
+      { fetcher: fetcher([parent], []), proposer: proposer(new Map([[child.url, [proposed(parent.url)]]]), providerCalls) },
+    );
+
+    expect(result.accepted_edges).toEqual([]);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: parent.url, termination: "validation-rejected" }));
+    // Strict mode never recurses into a rejected candidate.
+    expect(providerCalls).toEqual([child.url]);
+  });
+
+  it("promotes the same edge to probable and recurses into it in exploratory mode", async () => {
+    const child = weakChild("https://sources.test/weak-child-2", "2023-01-03");
+    const parent = weakParent("https://sources.test/weak-parent-2", "2023-01-02");
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "exploratory" },
+      { fetcher: fetcher([parent], []), proposer: proposer(new Map([[child.url, [proposed(parent.url)]], [parent.url, []]]), providerCalls) },
+    );
+
+    expect(result.rejected_edges).toEqual([]);
+    expect(result.accepted_edges).toHaveLength(1);
+    const edge = result.accepted_edges[0]!;
+    expect(edge.provenance_status).toBe("probable");
+    expect(edge.recursed).toBe(true);
+    // Only exploratory mode recurses into a probable parent.
+    expect(providerCalls).toEqual([child.url, parent.url]);
+  });
+
+  it("never classifies the submitted-text bootstrap match as probable or validated", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/exploratory-bootstrap";
+    const candidate = { url: "https://sources.test/exploratory-candidate", date: "2023-01-02", marker: "Candidate" };
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: submittedSeed(submittedUrl), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "exploratory" },
+      {
+        fetcher: fetcher([candidate], []),
+        proposer: proposer(new Map([[submittedUrl, [proposed(candidate.url)]], [candidate.url, []]]), providerCalls),
+      },
+    );
+
+    const byUrl = new Map(result.documents.map((document) => [document.url, document.id]));
+    expect(result.candidate_matches).toEqual([{ source_id: byUrl.get(candidate.url), target_id: byUrl.get(submittedUrl) }]);
+    expect(result.accepted_edges.some((edge) => edge.child_id === byUrl.get(submittedUrl))).toBe(false);
+  });
+
+  describe("hard-invalid conditions stay rejected regardless of mode", () => {
+    it.each(["strict", "exploratory"] as const)("rejects an impossible-chronology candidate in %s mode", async (provenanceMode) => {
+      const child = { url: "https://sources.test/order-child", date: "2023-01-01", marker: "Child" };
+      // Links to the child, so it was necessarily written after it: an impossible parent regardless of claimed date.
+      const linkedParent = { url: "https://sources.test/order-parent", date: "2023-01-05", marker: "Parent", links: [child.url] };
+      const providerCalls: string[] = [];
+
+      const result = await traverseProvenance(
+        { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode },
+        { fetcher: fetcher([linkedParent], []), proposer: proposer(new Map([[child.url, [proposed(linkedParent.url)]]]), providerCalls) },
+      );
+
+      expect(result.accepted_edges).toEqual([]);
+      expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: linkedParent.url, termination: "validation-rejected" }));
+    });
+
+    it.each(["strict", "exploratory"] as const)("rejects a failed fetch in %s mode", async (provenanceMode) => {
+      const submittedUrl = "https://submitted.ariadne.invalid/hard-reject-fetch";
+      const missing = "https://sources.test/hard-reject-missing";
+      const result = await traverseProvenance(
+        { seed: submittedSeed(submittedUrl), claim: CLAIM, fabricated: FABRICATED, provenanceMode },
+        { fetcher: fetcher([], []), proposer: proposer(new Map([[submittedUrl, [proposed(missing)]]]), []) },
+      );
+      expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: missing, termination: "fetch-failure" }));
+    });
+
+    it.each(["strict", "exploratory"] as const)("rejects a same-artifact duplicate in %s mode", async (provenanceMode) => {
+      const a = { url: "https://sources.test/dup-a", date: "2023-01-03", marker: "A", links: ["https://sources.test/dup-a-mirror"] };
+      const mirror = { url: "https://sources.test/dup-a-mirror", date: "2023-01-03", marker: "A" }; // same content/marker, canonicalizes with `a`
+      const result = await traverseProvenance(
+        { seed: seed(a), claim: CLAIM, fabricated: FABRICATED, provenanceMode },
+        { fetcher: fetcher([mirror], []), proposer: proposer(new Map([[a.url, [proposed(mirror.url)]]]), []) },
+      );
+      expect(result.accepted_edges).toEqual([]);
+    });
+  });
+
+  it("does not let discovered_by or other provider metadata change acceptance in exploratory mode", async () => {
+    const child = weakChild("https://sources.test/meta-child", "2023-01-03");
+    const parent = weakParent("https://sources.test/meta-parent", "2023-01-02");
+
+    const run = async (discovered_by: readonly string[]) =>
+      traverseProvenance(
+        { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "exploratory" },
+        {
+          fetcher: fetcher([parent], []),
+          proposer: proposer(new Map([[child.url, [{ url: parent.url, discovered_by }]], [parent.url, []]]), []),
+        },
+      );
+
+    const low = await run(["web-search"]);
+    const high = await run(["gptzero", "web-search"]);
+
+    expect(low.accepted_edges).toEqual(high.accepted_edges);
+    expect(low.rejected_edges).toEqual(high.rejected_edges);
+    expect(low.accepted_edges[0]?.provenance_status).toBe("probable");
+  });
+
+  it("caps how many probable parents a single node accepts (exploratory branch cap)", async () => {
+    const tags = ["one", "two", "three", "four"];
+    const child: Page = {
+      url: "https://sources.test/cap-child",
+      date: "2023-01-09",
+      marker: "Child",
+      body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${tags.map((tag) => distinctivePhrase(tag)).join(". ")}.`,
+    };
+    const parents = tags.map((tag, index) => weakParent(`https://sources.test/cap-parent-${index}`, "2023-01-01", tag));
+    const providerCalls: string[] = [];
+    const routes = new Map<string, ProposedUpstreamSource[]>([[child.url, parents.map((page) => proposed(page.url))]]);
+    for (const page of parents) routes.set(page.url, []);
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "exploratory" },
+      { fetcher: fetcher(parents, []), proposer: proposer(routes, providerCalls) },
+    );
+
+    const probable = result.accepted_edges.filter((edge) => edge.provenance_status === "probable");
+    expect(probable).toHaveLength(3);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "exploratory-branch-cap" }));
+  });
+});
