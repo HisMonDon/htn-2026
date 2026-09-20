@@ -814,11 +814,11 @@ export default function GraphVisualizer({ data, specular, nodeAccentColors }: Gr
 
         context.textBaseline = "middle";
         context.font = "500 6.5px ui-monospace, SFMono-Regular, Menlo, monospace";
-        context.fillStyle = roleColor;
+        context.fillStyle = accentColor ? "rgba(255, 255, 255, 0.92)" : roleColor;
         context.fillText(fitText(context, (node.publisher || "unknown").toUpperCase(), 118), x + 13, y + 14);
 
         context.textAlign = "right";
-        context.fillStyle = "rgba(227, 215, 237, 0.48)";
+        context.fillStyle = accentColor ? "rgba(255, 255, 255, 0.72)" : "rgba(227, 215, 237, 0.48)";
         const dateLabel = hasTimestampConflict(node) && !node.timestamp
           ? "CONFLICTING DATES"
           : formatDate(node.timestamp).toUpperCase();
@@ -1136,7 +1136,7 @@ export default function GraphVisualizer({ data, specular, nodeAccentColors }: Gr
               </TypedCard>
             )}
             <Field label="Matched passage"><Passage value={selectedNode.passage} /></Field>
-            <Field label="Fabricated citations"><StringList items={selectedNode.fabricated_citations} empty="none recorded" /></Field>
+            <Field label="Reasons"><StringList items={selectedNode.fabricated_citations} empty="none recorded" /></Field>
             <Field label="Mutations"><StringList items={selectedNode.mutations} empty="none recorded" /></Field>
             <Field label="Discovered via"><StringList items={selectedNode.discovered_via} empty="unknown" /></Field>
             <Field label="Seed">{selectedNode.is_seed ? "yes" : "no"}</Field>
