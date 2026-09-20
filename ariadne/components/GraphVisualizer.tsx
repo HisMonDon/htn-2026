@@ -28,7 +28,7 @@ import {
   type GraphNode,
 } from "@/lib/graph";
 import { displayTitle, formatDate, formatTimestamp, passagePreview, percent } from "@/lib/format";
-import { computeProvenanceLayout } from "@/lib/layout";
+import { computePrimaryParents, computeProvenanceLayout } from "@/lib/layout";
 import { ConfidenceBar, Drawer, Field, StringList, TypedCard } from "./panel-ui";
 import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
 
@@ -37,6 +37,37 @@ const ORDERING_NOTE: Record<string, string> = {
   "same-time": "Both documents carry the same publication time; order is not separable from timestamps alone.",
   "from-link": "Order was inferred from link evidence, not from a reliable publication timestamp.",
   unknown: "Publication order could not be established from the available timestamps.",
+};
+
+/**
+ * Provenance strength — how sure Ariadne is that this edge is a real propagation link — never a
+ * statement about whether the linked document agrees with the claim. See `ClaimRelationship`
+ * below for that independent axis.
+ */
+const PROVENANCE_STATUS_LABEL: Record<string, string> = {
+  validated: "Validated",
+  probable: "Probable",
+  related: "Related (investigative crosslink)",
+  citation: "Citation",
+  candidate: "Candidate match",
+};
+
+const PROVENANCE_STATUS_NOTE: Record<string, string> = {
+  probable: "Meaningful provenance evidence exists, but it falls below the strict validated threshold.",
+  related: "A meaningfully connected document worth investigating. Not a provenance claim, and excluded from mutation analysis.",
+  citation: "Recovered from a citation graph (e.g. Semantic Scholar), not from Ariadne's own scoring.",
+};
+
+/**
+ * Whether a related/cited document semantically agrees with the claim — independent of how
+ * strong its provenance link is. Only rendered when the backend supplies it; never inferred here.
+ */
+const CLAIM_RELATIONSHIP_LABEL: Record<string, string> = {
+  supports: "Supports the claim",
+  contradicts: "Contradicts the claim",
+  modifies: "Modifies the claim",
+  extends: "Extends the claim",
+  unrelated: "Unrelated to the claim",
 };
 
 const UNKNOWN_COLOR = "#6b7280";
@@ -419,6 +450,32 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
     }));
     return { nodes, links };
   }, [data]);
+
+  /**
+   * The same primary-parent choice the layout used to assign depth (lib/layout.ts), reused here
+   * purely for edge styling: an edge that is somebody's chosen primary parent draws as the
+   * strong hierarchy line; every other accepted edge — a second/third parent, a related or
+   * citation crosslink — draws as a secondary crosslink. No graph data changes; this only
+   * decides which line gets which paint.
+   */
+  const primaryEdgeKeys = useMemo(() => {
+    const primaryParents = computePrimaryParents(data.nodes, data.links);
+    const keys = new Set<string>();
+    for (const [child, parent] of primaryParents) {
+      if (parent) keys.add(`${parent} ${child}`);
+    }
+    return keys;
+  }, [data.nodes, data.links]);
+
+  const isPrimaryLink = useCallback(
+    (link: GraphLink) => {
+      const parent = endpointId(link.source) ?? link.parent_id;
+      const child = endpointId(link.target) ?? link.child_id;
+      if (!parent || !child) return false;
+      return primaryEdgeKeys.has(`${parent} ${child}`);
+    },
+    [primaryEdgeKeys]
+  );
 
   // Cinematic sequence controller
   const seqState = useRef({
@@ -805,21 +862,29 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
 
       const isHovered = link === selectedLink || link === hoveredLink || isFocusedLink(link);
       const candidateMatch = link.kind === "candidate_match";
+      // Secondary crosslinks: an accepted edge that isn't anyone's chosen layout parent — a second
+      // or third source into the same document, a related/citation link, etc. Kept fully in the
+      // graph, just painted lighter so the primary hierarchy reads clearly (req. 4).
+      const secondary = !candidateMatch && !isPrimaryLink(link);
       a.hover += ((isHovered ? 1 : 0) - a.hover) * 0.08;
       a.pop += ((animPhase === "complete" ? 1 : 0) - a.pop) * 0.12;
 
       let strokeColor = candidateMatch
         ? `rgba(125, 211, 252, ${0.18 + 0.28 * link.confidence})`
-        : `rgba(223, 171, 84, ${0.34 + 0.46 * link.confidence})`;
+        : secondary
+          ? `rgba(180, 150, 200, ${0.16 + 0.22 * link.confidence})`
+          : `rgba(223, 171, 84, ${0.34 + 0.46 * link.confidence})`;
       if (link === selectedLink) strokeColor = SELECTED_EDGE_COLOR;
       else if (focusedNodeIds && !isFocusedLink(link)) strokeColor = "rgba(155, 125, 179, 0.07)";
       else if (isFocusedLink(link)) {
         strokeColor = candidateMatch
           ? `rgba(186, 230, 253, ${0.46 + 0.36 * link.confidence})`
-          : `rgba(247, 202, 111, ${0.58 + 0.38 * link.confidence})`;
+          : secondary
+            ? `rgba(216, 191, 232, ${0.4 + 0.3 * link.confidence})`
+            : `rgba(247, 202, 111, ${0.58 + 0.38 * link.confidence})`;
       }
 
-      const baseWidth = candidateMatch ? 0.55 + 0.7 * link.confidence : 1 + 1.5 * link.confidence;
+      const baseWidth = candidateMatch || secondary ? 0.55 + 0.7 * link.confidence : 1 + 1.5 * link.confidence;
       const targetWidth = baseWidth * (0.6 + 0.4 * a.pop) + (0.9 + (link === selectedLink ? 1.3 : 0)) * a.hover;
 
       const [p0, p1, p2, p3] = getSplinePoints(
@@ -833,7 +898,7 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
       context.lineWidth = targetWidth;
       context.strokeStyle = strokeColor;
       context.lineCap = "round";
-      context.setLineDash(candidateMatch ? [5, 5] : []);
+      context.setLineDash(candidateMatch ? [5, 5] : secondary ? [2, 4] : []);
       context.stroke();
       context.setLineDash([]);
 
@@ -845,7 +910,9 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
         const arrowAngle = getBezierAngle(arrowRelPos, p0, p1, p2, p3);
         const arrowColor = candidateMatch
           ? (link === selectedLink || isFocusedLink(link) ? "rgba(224, 242, 254, 0.9)" : "rgba(125, 211, 252, 0.48)")
-          : (link === selectedLink || isFocusedLink(link) ? "rgba(255, 221, 145, 0.95)" : "rgba(223, 171, 84, 0.68)");
+          : secondary
+            ? (link === selectedLink || isFocusedLink(link) ? "rgba(224, 208, 236, 0.85)" : "rgba(180, 150, 200, 0.4)")
+            : (link === selectedLink || isFocusedLink(link) ? "rgba(255, 221, 145, 0.95)" : "rgba(223, 171, 84, 0.68)");
 
         context.translate(arrowPoint.x, arrowPoint.y);
         context.rotate(arrowAngle);
@@ -874,7 +941,7 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
         }
       }
     },
-    [animPhase, selectedLink, hoveredLink, focusedNodeIds, isFocusedLink]
+    [animPhase, selectedLink, hoveredLink, focusedNodeIds, isFocusedLink, isPrimaryLink]
   );
 
   return (
@@ -899,11 +966,12 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
           nodeCanvasObjectMode={() => "replace"}
           nodePointerAreaPaint={paintNodePointerArea}
           onNodeHover={(node) => animPhase === "complete" && setHoveredNode(node ?? null)}
-          linkLabel={(link) => (
-            animPhase === "complete"
-              ? `${link.kind === "candidate_match" ? "Candidate source match" : "Validated provenance"} · ${percent(link.confidence)}`
-              : ""
-          )}
+          linkLabel={(link) => {
+            if (animPhase !== "complete") return "";
+            const statusLabel = PROVENANCE_STATUS_LABEL[link.provenance_status] ?? "Validated provenance";
+            const secondaryNote = link.kind !== "candidate_match" && !isPrimaryLink(link) ? " (secondary crosslink)" : "";
+            return `${statusLabel}${secondaryNote} · ${percent(link.confidence)}`;
+          }}
           linkCanvasObject={paintLink}
           linkCanvasObjectMode={() => "replace"}
           linkPointerAreaPaint={paintLinkPointerArea}
@@ -1072,6 +1140,22 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
               <p className="rounded-xl border border-sky-300/15 bg-sky-300/[0.06] px-4 py-3 text-sm leading-relaxed text-sky-100/75">
                 This edge records a source match to the submitted claim. It does not assert publication-to-publication provenance.
               </p>
+            )}
+            {selectedLink.provenance_status && selectedLink.provenance_status !== "validated" && (
+              <Field label="Provenance status">
+                <p>{PROVENANCE_STATUS_LABEL[selectedLink.provenance_status] ?? selectedLink.provenance_status}</p>
+                {PROVENANCE_STATUS_NOTE[selectedLink.provenance_status] && (
+                  <p className="mt-1 text-xs text-gray-500">{PROVENANCE_STATUS_NOTE[selectedLink.provenance_status]}</p>
+                )}
+              </Field>
+            )}
+            {selectedLink.claim_relationship && (
+              <Field label="Claim relationship">
+                <p>{CLAIM_RELATIONSHIP_LABEL[selectedLink.claim_relationship] ?? selectedLink.claim_relationship}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Independent of provenance: this describes semantic agreement with the claim, not how this document was linked to it.
+                </p>
+              </Field>
             )}
             <Field label={selectedLinkIsCandidate ? "Match strength" : "Confidence"}>
               <div className="space-y-2">

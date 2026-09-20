@@ -13,10 +13,11 @@ import type { CompletedUpstreamAnalysis, UpstreamAnalysis, UpstreamProposal, Ups
 export const GPTZERO_CHANNEL = "gptzero";
 export const WEB_CHANNEL = "web-search";
 export const SEMANTIC_SCHOLAR_CHANNEL = "semantic-scholar";
+export const DOCUMENT_NATIVE_CHANNEL = "document-native";
 
 export interface ChannelFailureEvent {
   document_id: string;
-  channel: typeof GPTZERO_CHANNEL | typeof WEB_CHANNEL | typeof SEMANTIC_SCHOLAR_CHANNEL;
+  channel: typeof GPTZERO_CHANNEL | typeof WEB_CHANNEL | typeof SEMANTIC_SCHOLAR_CHANNEL | typeof DOCUMENT_NATIVE_CHANNEL;
   message: string;
 }
 
@@ -25,6 +26,13 @@ export interface MultiSourceProposerOptions {
   onChannelFailure?: (event: ChannelFailureEvent) => void;
   /** Sources whose web results are kept while GPTZero is paused, so a resume does not search again. Default 200. */
   cacheLimit?: number;
+  /**
+   * Deterministic document-native discovery (outbound links, DOI/arXiv/docket/case-name text
+   * extraction). Unlike the web and Semantic Scholar channels this never calls out to a provider,
+   * so it always runs, including on a resumed/paused analysis, and never gates the cached-search
+   * short-circuit below.
+   */
+  native?: UpstreamSourceProposer;
 }
 
 function isPending(analysis: UpstreamAnalysis): analysis is { status: "pending"; job_id: string; retry_after_ms?: number | null } {
@@ -124,17 +132,20 @@ export class MultiSourceProposer implements UpstreamSourceProposer {
       return this.semanticScholar.analyze(document, continuation);
     }
     const cached = continuation ? this.supplementalCache.get(document.id) : undefined;
-    const [primary, webResult, semanticResult] = await Promise.allSettled([
+    const [primary, webResult, semanticResult, nativeResult] = await Promise.allSettled([
       this.gptzero.analyze(document, continuation),
       cached ? Promise.resolve([] as readonly UpstreamProposal[]) : this.web ? this.web.analyze(document).then(proposalsOf) : Promise.resolve([] as readonly UpstreamProposal[]),
       cached ? Promise.resolve(cached) : this.semanticScholar ? this.semanticScholar.analyze(document).then(proposalsOf) : Promise.resolve([] as readonly UpstreamProposal[]),
+      this.options.native ? this.options.native.analyze(document).then(proposalsOf) : Promise.resolve([] as readonly UpstreamProposal[]),
     ]);
 
     const webProposals = webResult.status === "fulfilled" ? tag(webResult.value, WEB_CHANNEL) : [];
     const semanticProposals = semanticResult.status === "fulfilled" ? tag(semanticResult.value, SEMANTIC_SCHOLAR_CHANNEL) : [];
-    const supplemental = cached ?? mergeProposals(webProposals, semanticProposals);
+    const nativeProposals = nativeResult.status === "fulfilled" ? tag(nativeResult.value, DOCUMENT_NATIVE_CHANNEL) : [];
+    const supplemental = mergeProposals(cached ?? mergeProposals(webProposals, semanticProposals), nativeProposals);
     if (webResult.status === "rejected") this.report(document.id, WEB_CHANNEL, webResult.reason);
     if (semanticResult.status === "rejected") this.report(document.id, SEMANTIC_SCHOLAR_CHANNEL, semanticResult.reason);
+    if (nativeResult.status === "rejected") this.report(document.id, DOCUMENT_NATIVE_CHANNEL, nativeResult.reason);
 
     if (primary.status === "rejected") {
       this.report(document.id, GPTZERO_CHANNEL, primary.reason);

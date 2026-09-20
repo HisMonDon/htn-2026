@@ -188,3 +188,55 @@ describe("candidate matches carried only by the backend response", () => {
     expect(data.links.map((link) => link.kind).sort()).toEqual(["candidate_match", "validated_provenance"]);
   });
 });
+
+describe("provenance status and claim relationship (task 2)", () => {
+  const withStatus = (source: string, target: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id: `${source}-${target}`, source, target, reference_url: null, status,
+    ariadne_score: 0.7, score_method: "traversal-scoreEdge", type: "propagation",
+    evidence: { basis: "", explicit_link: false, shared_mutations: [], rare_shared_phrases: 0, similarity: 0, temporal: { parent_time: null, child_time: null, gap_days: null, ordering: "unknown" } },
+    inspection: null, claim_mutations: [], recursed: false, directionality: "unknown", evidence_tags: [],
+    ...extra,
+  }) as unknown as BackendEdge;
+
+  it("surfaces the backend's real status instead of collapsing probable/related into validated", () => {
+    const parent = node("parent", "fetched");
+    const child = node("child", "fetched");
+    const data = toGraphData(tree([parent, child], [edge("parent", "child")]), [withStatus("parent", "child", "probable")]);
+
+    expect(data.links[0]?.provenance_status).toBe("probable");
+    // The binary backend_status contract (candidate vs. accepted) is unaffected.
+    expect(data.links[0]?.backend_status).toBe("validated");
+  });
+
+  it("defaults provenance_status to validated when no matching backend edge is found", () => {
+    const parent = node("parent", "fetched");
+    const child = node("child", "fetched");
+    const data = toGraphData(tree([parent, child], [edge("parent", "child")]));
+
+    expect(data.links[0]?.provenance_status).toBe("validated");
+  });
+
+  it("marks a discovery-only candidate match with provenance_status candidate", () => {
+    const seed = node("seed", "submitted");
+    const source = node("source", "fetched");
+    const candidateEdge = {
+      id: "source-seed", source: "source", target: "seed", reference_url: null, status: "candidate", reason: "Awaiting validation",
+    } as unknown as BackendEdge;
+    const data = toGraphData(tree([seed], []), [candidateEdge], [seed, source]);
+
+    expect(data.links[0]?.provenance_status).toBe("candidate");
+  });
+
+  it("passes through claim_relationship only when the backend supplies it, never inventing one", () => {
+    const parent = node("parent", "fetched");
+    const child = node("child", "fetched");
+    const withClaim = toGraphData(
+      tree([parent, child], [edge("parent", "child")]),
+      [withStatus("parent", "child", "related", { claim_relationship: "contradicts" })]
+    );
+    expect(withClaim.links[0]?.claim_relationship).toBe("contradicts");
+
+    const withoutClaim = toGraphData(tree([parent, child], [edge("parent", "child")]), [withStatus("parent", "child", "validated")]);
+    expect(withoutClaim.links[0]?.claim_relationship).toBeUndefined();
+  });
+});

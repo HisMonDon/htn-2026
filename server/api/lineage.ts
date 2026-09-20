@@ -4,6 +4,7 @@ import { CORPUS } from "../../data/research-corpus";
 import type { Config } from "../config";
 import { createUpstreamSourceProposer, startProviderRun } from "../gptzero/composition";
 import { claimTerms } from "../research/discovery";
+import { createDocumentNativeProposer } from "../research/document-native-proposer";
 import { MultiSourceProposer } from "../research/multi-proposer";
 import { createWebSearchProposer } from "../research/web-proposer";
 import { assembleDocument, type CandidateDocument } from "../research/extract";
@@ -47,11 +48,14 @@ export function createLineageDeps(
     : config.webSearch;
   const web = webSearchConfig ? createWebSearchProposer(webSearchConfig) : null;
   const semanticScholar = config.semanticScholar ? createSemanticScholarProposer(config.semanticScholar) : null;
-  const proposer = web || semanticScholar
-    ? new MultiSourceProposer(gptzero, web, semanticScholar, {
-        onChannelFailure: (event) => console.warn(`[proposer] ${event.channel} failed for ${event.document_id}: ${event.message}`),
-      })
-    : gptzero;
+  // Document-native discovery (outbound links, DOI/arXiv/docket/case-name text extraction) never
+  // calls an external provider, so it always runs alongside whichever of GPTZero/web/Semantic
+  // Scholar are configured.
+  const native = createDocumentNativeProposer();
+  const proposer = new MultiSourceProposer(gptzero, web, semanticScholar, {
+    native,
+    onChannelFailure: (event) => console.warn(`[proposer] ${event.channel} failed for ${event.document_id}: ${event.message}`),
+  });
   return { proposer, fetcher: new DirectHttpFetcher() };
 }
 

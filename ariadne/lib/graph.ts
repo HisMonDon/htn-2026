@@ -17,6 +17,22 @@ import type {
 export type NodeRole = "seed" | "candidate" | "root" | "conflict" | "discovered";
 export type EdgeKind = "candidate_match" | "validated_provenance";
 
+/**
+ * The backend's actual provenance-strength vocabulary (see `AriadneEdge.status` in
+ * shared/ariadne.ts), preserved through to the graph edge instead of collapsing everything
+ * accepted into "validated". Used only to pick a layout's primary parent and to choose
+ * primary/secondary edge styling — never to alter what the backend actually asserted.
+ * Priority for layout purposes: validated > probable > citation > related > candidate.
+ */
+export type ProvenanceStatus = "validated" | "probable" | "citation" | "related" | "candidate";
+
+/**
+ * Independent from provenance: whether a related/cited document semantically agrees with the
+ * submitted claim. Optional and backend-supplied only — the frontend never infers this itself.
+ * Absent on every edge until the backend starts populating it.
+ */
+export type ClaimRelationship = "supports" | "contradicts" | "modifies" | "extends" | "unrelated";
+
 export interface GraphNode extends LineageTreeNode {
   /** Listed in `tree.root_ids` — the top of a reconstructed propagation chain. */
   is_root: boolean;
@@ -37,6 +53,14 @@ export interface GraphLink extends LineageTreeEdge {
   backend_status: "validated" | "candidate";
   /** Presentation semantics derived from the backend node kind, never a validation result. */
   kind: EdgeKind;
+  /**
+   * The backend's real provenance status for this edge when it can be recovered from the full
+   * `edges` response (validated/probable/related/citation/candidate). Falls back to "validated"
+   * when no matching backend edge is found, matching this edge's prior default treatment.
+   */
+  provenance_status: ProvenanceStatus;
+  /** Present only when the backend supplies it. See `ClaimRelationship`. */
+  claim_relationship?: ClaimRelationship;
   /**
    * parent_id — provenance flows source -> target. Set as an id; the force simulation
    * swaps in the node object once laid out, so read it through `endpointId()`.
@@ -185,7 +209,7 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [],
   const known = new Set(nodes.map((node) => node.id));
   const backendByEndpoints = new Map(
     backendEdges
-      .filter((edge): edge is Extract<BackendEdge, { status: "validated" }> => edge.status === "validated")
+      .filter((edge) => edge.status !== "candidate" && edge.status !== "rejected")
       .map((edge) => [`${edge.source}\u0000${edge.target}`, edge])
   );
 
@@ -198,11 +222,18 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [],
       const touchesSubmission = parent?.source_kind === "submitted" || child?.source_kind === "submitted";
       const backendEdge = backendByEndpoints.get(`${edge.parent_id}\u0000${edge.child_id}`);
 
+      const claimRelationship = (backendEdge as { claim_relationship?: ClaimRelationship } | undefined)?.claim_relationship;
+      const provenanceStatus = (backendEdge?.status as ProvenanceStatus | undefined) ?? "validated";
+
       return {
         ...edge,
         source: edge.parent_id,
         target: edge.child_id,
-        backend_status: backendEdge?.status ?? "validated",
+        // "probable"/"related" are accepted-but-thinner-evidence statuses; they still count as
+        // "validated" for the existing binary backend_status contract (candidate vs. everything else).
+        backend_status: "validated",
+        provenance_status: provenanceStatus,
+        ...(claimRelationship ? { claim_relationship: claimRelationship } : {}),
         kind: touchesSubmission ? "candidate_match" : "validated_provenance",
       };
     });
@@ -227,6 +258,7 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [],
       source,
       target,
       backend_status: "candidate",
+      provenance_status: "candidate",
       kind: "candidate_match",
     });
   }
