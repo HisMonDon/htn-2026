@@ -19,6 +19,8 @@ Fill in `.env` locally. It is git-ignored. Only `.env.example` is committed.
 | `BROWSERBASE_PROJECT_ID` | Optional; Browserbase infers the project from the key |
 | `GPTZERO_API_KEY` | GPTZero `POST /v2/predict/text` |
 | `BRAVE_SEARCH_API_KEY` | Optional. Enables the web-retrieval proposer that runs alongside GPTZero (Brave Search API). Unset: GPTZero-only discovery. Search hits are only candidates; they are fetched and validated like any GPTZero proposal |
+| `SEMANTIC_SCHOLAR_API_KEY` | Optional. Sent only as the backend `x-api-key` header to the official Semantic Scholar Academic Graph API. When unset, academic citation expansion uses the public API's unauthenticated limits. |
+| `SEMANTIC_SCHOLAR_MAX_REFERENCES` / `SEMANTIC_SCHOLAR_MAX_CITATIONS` / `SEMANTIC_SCHOLAR_TIMEOUT_MS` | Per-paper citation branching caps (10/10 by default) and one Academic Graph API request timeout (10 seconds by default). |
 | `WEB_SEARCH_MAX_QUERIES`, `WEB_SEARCH_RESULTS_PER_QUERY`, `WEB_SEARCH_MAX_CANDIDATES`, `WEB_SEARCH_TIMEOUT_MS` | Per-source search bounds (defaults 5 queries, 4 results/query, 10 candidates; `WEB_SEARCH_TIMEOUT_MS` is the total search time budget per analyzed source, default 10000) |
 | `TRAVERSAL_MODE` | `strict` (validated recursion), `exploratory` (validated + probable), or `deep` (validated + probable + related). `PROVENANCE_MODE` remains a compatible alias. |
 | `MAX_GRAPH_DEPTH`, `MAX_EXPANDED_NODES`, `MAX_EDGES`, `MAX_CHILDREN_PER_NODE`, `MAX_RELATED_CHILDREN_PER_NODE` | Investigation-graph safety limits. Defaults are 5 hops, 25 expanded documents, 60 links, 6 links/document, and 4 related links/document. |
@@ -54,6 +56,14 @@ discover (direct source fetch -> optional resolution -> links) -> extract -> ind
 
 - **Discovery:** An upstream source URL is fetched directly over HTTP (with redirects, HTML/PDF detection, and a timeout). A provider-agnostic resolver may be injected for incomplete or dead citations. Research acquisition and resolution do not use Browserbase. The synthetic offline corpus in `data/research-corpus.ts` remains available under `USE_MOCKS=true`.
 - **Evidence per page:** URL, publisher, timestamp and where it came from, relevant passage, outbound links, fabricated citations and spelling variants, optional GPTZero result.
+
+### Academic citation graph
+
+For a document with a deterministic academic signal (DOI, Semantic Scholar ID, arXiv ID, citation-title plus authors, or a recognized scholarly paper URL), Ariadne also asks the official Semantic Scholar Academic Graph API for the paper's references and citations. It resolves DOI, Semantic Scholar ID, arXiv ID, then exact normalized title plus an author surname; a stronger identifier that does not resolve is not silently replaced by a fuzzy title match.
+
+Semantic Scholar is a structural proposer alongside GPTZero and optional web search. A reference produces `current paper → cited paper` with `relationship_kind: "citation", direction: "references"`; a citing paper produces `citing paper → current paper` with `direction: "cited_by"`. These edges recurse under the ordinary depth/node/edge budgets, preserve crosslinks, and never enter provenance scoring, validation, confidence, or mutation analysis. Citation records may create a `citation-metadata` node when only bibliographic metadata is available; no full text is fabricated. DOI URLs are preferred for those nodes, followed by arXiv/open-access URLs and the Semantic Scholar record as a fallback.
+
+`npm run demo:academic` performs a small live DOI traversal with at most three references and three citations, then prints the resolved paper ID, both branch counts, nodes, citation edges, depth, crosslinks, runtime, and status. It is safe to run without an API key, subject to public API limits.
 - **Retrieval:** Elastic hybrid (RRF over lexical, `semantic_text` and a shared-citation keyword match) when `ELASTIC_URL` or `ELASTIC_CLOUD_ID` is set, otherwise in-memory BM25. Retrieval only proposes pairs.
 - **Scoring** (`server/research/edges.ts`):
   - A later page never parents an earlier one. A page linking to something later than its own claimed date gets a flagged date conflict.

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { identifyAcademicPaper } from "../academic";
 import { extractDocument } from "../extract";
 import { MultiSourceProposer } from "../multi-proposer";
 import type { CitationProviderMetadata, UpstreamAnalysis, UpstreamProposal, UpstreamSourceProposer } from "../traversal";
@@ -28,7 +29,8 @@ function academicDocument() {
 
 function genericDocument() {
   return extractDocument({
-    url: "https://blog.example.test/post", html: "<html><head><title>A blog post</title></head><body><article><p>A garden grows here.</p></article></body></html>",
+    url: "https://dockets.court-archive.test/cohen/18-cr-602/doc-102-cohen-declaration",
+    html: "<html><head><title>Declaration of Michael Cohen</title></head><body><article><p>The declaration discusses court filings and cases, not a research paper.</p></article></body></html>",
     fabricated: [], claimTerms: [], discoveredVia: "test-seed",
   });
 }
@@ -69,6 +71,21 @@ describe("Semantic Scholar Academic Graph provider", () => {
     const proposer = new SemanticScholarProposer(new SemanticScholarProvider({ fetchImpl }));
     await expect(proposer.analyze(genericDocument())).resolves.toEqual([]);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("recognizes DOI, arXiv, and Semantic Scholar paper identifiers deterministically", () => {
+    const arxiv = extractDocument({
+      url: "https://arxiv.org/abs/2106.15928v1", html: "<html><head><title>ArXiv paper</title></head><body><article><p>Paper.</p></article></body></html>",
+      fabricated: [], claimTerms: [], discoveredVia: "test-seed",
+    });
+    const semanticScholar = extractDocument({
+      url: `https://www.semanticscholar.org/paper/Paper-title/${paperIdA}`, html: "<html><head><title>Indexed paper</title></head><body><article><p>Paper.</p></article></body></html>",
+      fabricated: [], claimTerms: [], discoveredVia: "test-seed",
+    });
+    expect(identifyAcademicPaper(academicDocument())).toEqual({ method: "doi", value: "10.1000/alpha" });
+    expect(identifyAcademicPaper(arxiv)).toEqual({ method: "arxiv", value: "2106.15928" });
+    expect(identifyAcademicPaper(semanticScholar)).toEqual({ method: "semantic_scholar_paper_id", value: paperIdA });
+    expect(identifyAcademicPaper(genericDocument())).toBeNull();
   });
 
   it("sends x-api-key only when configured", async () => {

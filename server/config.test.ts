@@ -22,10 +22,21 @@ describe("traversal configuration", () => {
       maxRelatedChildrenPerNode: 4,
       maxProbableChildrenPerNode: 3,
     });
+    expect(config.semanticScholar).toEqual({ apiKey: null, maxReferences: 10, maxCitations: 10, timeoutMs: 10_000 });
   });
 
   it("keeps the compatible PROVENANCE_MODE fallback and strict default", () => {
     expect(loadConfig({ PROVENANCE_MODE: "exploratory" }).provenanceMode).toBe("exploratory");
     expect(loadConfig({}).provenanceMode).toBe("strict");
+  });
+
+  it("loads bounded Semantic Scholar settings without requiring an API key", () => {
+    expect(loadConfig({
+      SEMANTIC_SCHOLAR_API_KEY: "s2-key",
+      SEMANTIC_SCHOLAR_MAX_REFERENCES: "7",
+      SEMANTIC_SCHOLAR_MAX_CITATIONS: "8",
+      SEMANTIC_SCHOLAR_TIMEOUT_MS: "9000",
+    }).semanticScholar).toEqual({ apiKey: "s2-key", maxReferences: 7, maxCitations: 8, timeoutMs: 9000 });
+    expect(loadConfig({}).semanticScholar.apiKey).toBeNull();
   });
 });

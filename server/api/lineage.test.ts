@@ -5,7 +5,7 @@ import { AriadneEdge, AriadneResponse, type AriadneRequest } from "../../shared/
 import { BibliographySourceProposer } from "../gptzero/bibliography";
 import { extractDocument } from "../research/extract";
 import { CorpusFetcher, toAuditMetadata, type PageFetcher } from "../research/providers";
-import { traverseProvenance, type TraverseProvenanceDeps, type UpstreamSourceProposer } from "../research/traversal";
+import { traverseProvenance, type CitationProviderMetadata, type TraverseProvenanceDeps, type UpstreamSourceProposer } from "../research/traversal";
 import { harness, type Harness } from "../test-helpers";
 import { createApi } from "./app";
 import { createLineageController, type LineageController } from "./lineage";
@@ -74,6 +74,30 @@ async function parsed(response: Response) {
 }
 
 describe("recursive research HTTP contract", () => {
+  it("serializes Semantic Scholar citation edges without presenting them as provenance", async () => {
+    const metadata: CitationProviderMetadata = {
+      provider: "semantic-scholar", resolved_paper_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", resolved_by: "doi",
+      paper: {
+        semantic_scholar_paper_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", doi: "10.1000/cited-paper",
+        canonical_url: "https://doi.org/10.1000/cited-paper", title: "Cited paper", authors: ["Ada Lovelace"], year: 2020,
+      },
+      contexts: ["A citation context"], intents: ["Background"], is_influential: true,
+    };
+    const api = await start({
+      fetcher: new CorpusFetcher(pages),
+      proposer: { analyze: async (document) => document.url === a ? [{
+        url: metadata.paper.canonical_url, title: metadata.paper.title,
+        relationship_kind: "citation", citation_direction: "references", citation_metadata: metadata,
+      }] : [] },
+    });
+    const body = await parsed(await api.post());
+    const edge = body.edges.find((item) => item.status === "citation");
+
+    expect(edge).toMatchObject({ status: "citation", relationship_kind: "citation", direction: "references", provider_metadata: { contexts: ["A citation context"], is_influential: true } });
+    expect(body.edges.some((item) => item.status === "validated")).toBe(false);
+    expect(body.nodes.find((item) => item.title === "Cited paper")).toMatchObject({ source_kind: "citation-metadata", academic_metadata: { metadata_only: true } });
+  });
+
   it("runs the same traversal and retains validated edges, mutations and inspectable evidence", async () => {
     const deps = { proposer: proposer(), fetcher: new CorpusFetcher(pages) };
     const api = await start(deps);

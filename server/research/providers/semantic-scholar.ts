@@ -90,6 +90,14 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 1000 && value <= 3000 ? value : null;
 }
 
+function isSemanticScholarUrl(value: string | null): boolean {
+  try {
+    return new URL(value ?? "https://invalid.example").hostname.toLowerCase().endsWith("semanticscholar.org");
+  } catch {
+    return false;
+  }
+}
+
 function metadataFromPaper(raw: unknown): SemanticScholarPaper | null {
   const paper = record(raw);
   const paperId = text(paper?.paperId);
@@ -100,6 +108,7 @@ function metadataFromPaper(raw: unknown): SemanticScholarPaper | null {
   const directUrl = text(paper?.url);
   const openAccess = record(paper?.openAccessPdf);
   const openAccessUrl = text(openAccess?.url);
+  const publisherUrl = directUrl && !isSemanticScholarUrl(directUrl) ? directUrl : null;
   const metadata: AcademicPaperMetadata = {
     semantic_scholar_paper_id: paperId,
     doi,
@@ -109,9 +118,8 @@ function metadataFromPaper(raw: unknown): SemanticScholarPaper | null {
     year: numberOrNull(paper?.year),
     publication_date: text(paper?.publicationDate),
     venue: text(paper?.venue) ?? text(record(paper?.journal)?.name) ?? text(record(paper?.publicationVenue)?.name),
-    // S2 currently exposes DOI, arXiv, OA and its own record URL. Prefer a durable paper source;
-    // the Semantic Scholar record remains an explicit fallback when no canonical source is known.
-    canonical_url: doi ? `https://doi.org/${doi}` : arxiv ? `https://arxiv.org/abs/${arxiv}` : openAccessUrl ?? directUrl ?? `https://www.semanticscholar.org/paper/${paperId}`,
+    // Prefer a durable paper source; the Semantic Scholar record remains an explicit fallback.
+    canonical_url: doi ? `https://doi.org/${doi}` : publisherUrl ?? (arxiv ? `https://arxiv.org/abs/${arxiv}` : null) ?? openAccessUrl ?? directUrl ?? `https://www.semanticscholar.org/paper/${paperId}`,
   };
   try {
     metadata.canonical_url = canonicalUrl(new URL(metadata.canonical_url ?? `https://www.semanticscholar.org/paper/${paperId}`).toString());
