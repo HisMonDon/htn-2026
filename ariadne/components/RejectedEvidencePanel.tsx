@@ -63,6 +63,21 @@ function TabButton({
   );
 }
 
+function RejectionReason({ reason }: { reason: string }) {
+  const items = reason
+    .split(/\r?\n/u)
+    .map((item) => item.replace(/^[\s•-]+/u, "").trim())
+    .filter(Boolean);
+
+  if (items.length <= 1) return <p className="leading-relaxed">{reason}</p>;
+
+  return (
+    <ul className="list-disc space-y-1 pl-4 leading-relaxed marker:text-red-300/70">
+      {items.map((item) => <li key={item}>{item}</li>)}
+    </ul>
+  );
+}
+
 export default function RejectedEvidencePanel({
   open,
   tab,
@@ -126,12 +141,12 @@ export default function RejectedEvidencePanel({
                   color={REJECTED_COLOR}
                   className="p-4 space-y-3"
                 >
-                  <Endpoint role="Parent" id={edge.parent_id} node={nodesById.get(edge.parent_id)} />
+                  <Endpoint role="Source" id={edge.parent_id} node={nodesById.get(edge.parent_id)} />
                   <div className="flex items-center justify-center text-[10px] text-gray-600 uppercase tracking-wide">
                     <ArrowDown size={14} className="mr-1.5" />
                     attempted provenance relationship
                   </div>
-                  <Endpoint role="Child" id={edge.child_id} node={nodesById.get(edge.child_id)} />
+                  <Endpoint role="Candidate" id={edge.child_id} node={nodesById.get(edge.child_id)} />
 
                   <Field label="Confidence">
                     <div className="space-y-1.5">
@@ -141,8 +156,8 @@ export default function RejectedEvidencePanel({
                   </Field>
 
                   {/* Verbatim from the deterministic scorer. */}
-                  <Field label="Reason">
-                    <p className="leading-relaxed">{edge.reason}</p>
+                  <Field label="Why rejected">
+                    <RejectionReason reason={edge.reason} />
                   </Field>
                 </TypedCard>
               ))

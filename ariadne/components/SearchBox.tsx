@@ -15,6 +15,7 @@ const suggestions = [
   "memory-augmented potential field theory",
   "leveraging biometric leakage",
   "efficient llm uncertainty quantification",
+  "binarized neural networks",
 ];
 
 export default function SearchBox({

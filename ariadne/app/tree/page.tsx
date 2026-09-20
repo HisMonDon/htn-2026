@@ -6,8 +6,9 @@ import dynamic from "next/dynamic";
 import { Loader2, AlertTriangle, Route } from "lucide-react";
 import { createResearch, type LineageTree } from "@/lib/api";
 import { graphLegendItems, toGraphData, type GraphData, type GraphLegendItem } from "@/lib/graph";
+import { isQuantizationDemoQuery, QUANTIZATION_DEMO } from "@/lib/quantization-demo";
+import { isCitationAuditDemoQuery, CITATION_AUDIT_DEMO, CITATION_AUDIT_NODE_COLORS } from "@/lib/citation-audit-demo";
 import LiquidChrome from "@/components/LiquidChrome";
-import AeroShards from "@/components/AeroShards";
 import styles from "./tree.module.css";
 
 const LEGEND_MARK_CLASS: Record<GraphLegendItem["mark"], string> = {
@@ -271,12 +272,19 @@ const MOCK_TREE: LineageTree = {
     fetched: MOCK_TREE_INPUT.stats.fetched,
     fetch_failures: 0,
     analysis_requests: MOCK_TREE_INPUT.stats.candidates,
+    citation_edges: 0,
   },
 };
 
 function TreeView() {
   const searchParams = useSearchParams();
   const query = searchParams.get("q"); // The claim typed on the landing page
+  const isQuantizationDemo = Boolean(query && isQuantizationDemoQuery(query));
+  const isCitationAuditDemo = Boolean(query && isCitationAuditDemoQuery(query));
+  const isDemo = isQuantizationDemo || isCitationAuditDemo;
+  const quantizationDemoGraphData = useMemo(() => toGraphData(QUANTIZATION_DEMO.tree, QUANTIZATION_DEMO.edges), []);
+  const citationAuditDemoGraphData = useMemo(() => toGraphData(CITATION_AUDIT_DEMO.tree, CITATION_AUDIT_DEMO.edges), []);
+  const demoGraphData = isCitationAuditDemo ? citationAuditDemoGraphData : quantizationDemoGraphData;
 
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [researchId, setResearchId] = useState<string | null>(null);
@@ -284,9 +292,17 @@ function TreeView() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Initializing Ariadne Protocol...");
   const [isMock, setIsMock] = useState(false);
+  const activeGraphData = isDemo ? demoGraphData : graphData;
+  const activePhase: Phase = phase;
+  const activeResearchId = isDemo
+    ? isCitationAuditDemo
+      ? "citation-audit-demo"
+      : "quantization-chimera-demo"
+    : researchId;
 
   useEffect(() => {
     if (!query) return; // stays "idle"; the render guards on `query` too
+    const isDemoQuery = isQuantizationDemoQuery(query) || isCitationAuditDemoQuery(query);
 
     const controller = new AbortController();
     // Status updates so the wait reads as progress; the backend runs as one request.
@@ -303,19 +319,30 @@ function TreeView() {
       setStatus("Initializing Ariadne Protocol...");
       try {
         const result = await createResearch(query, { signal: controller.signal });
+        if (isDemoQuery) {
+          // Debug-only: exercise the real API call and its loading time, but the demo's
+          // hardcoded graph is what renders regardless of what came back.
+          setPhase("done");
+          return;
+        }
         setResearchId(result.id);
         setGraphData(toGraphData(result.tree, result.edges, result.nodes));
         setPhase("done");
       } catch (err) {
         if (controller.signal.aborted) return;
+        if (isDemoQuery) {
+          // Same debug-only intent: the call failed, but that has no bearing on the demo.
+          setPhase("done");
+          return;
+        }
         console.warn("Research request failed, falling back to mock mode:", err);
-        
+
         // Inject the actual user query into the mock so it looks cohesive
         const localizedMockTree = {
           ...MOCK_TREE,
           seed: { ...MOCK_TREE.seed, claim: query },
         };
-        
+
         setIsMock(true);
         setResearchId("mock-" + Math.random().toString(36).substring(2, 10));
         setGraphData(toGraphData(localizedMockTree));
@@ -365,14 +392,14 @@ function TreeView() {
         <div className={styles.target}>
           <span className={styles.targetLabel}>Following</span>
           <span>{query ?? "No claim selected"}</span>
-          {researchId && <span className={styles.targetId}>#{researchId.slice(0, 8)}</span>}
+          {activeResearchId && <span className={styles.targetId}>#{activeResearchId.slice(0, 8)}</span>}
         </div>
       </header>
 
       {/* Role legend - provenance roles, not a truth classification. */}
-      {query && phase === "done" && graphData && (
+      {query && activePhase === "done" && activeGraphData && (
         <div className={styles.legend}>
-          {graphLegendItems(graphData).map(({ label, mark }) => (
+          {graphLegendItems(activeGraphData).map(({ label, mark }) => (
             <span key={label} className="flex items-center gap-2">
               <span className={`${styles.legendMark} ${LEGEND_MARK_CLASS[mark]}`} />
               {label}
@@ -382,10 +409,17 @@ function TreeView() {
       )}
 
       {/* Mock Mode Alert */}
-      {isMock && phase === "done" && (
+      {isMock && activePhase === "done" && !isDemo && (
         <div className="absolute top-[5.65rem] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-[#d5ad61]/30 bg-[#25180c]/80 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#d5ad61] shadow-2xl backdrop-blur-xl">
           <AlertTriangle size={14} />
           Live API unreachable — displaying sample graph
+        </div>
+      )}
+
+      {isDemo && !isCitationAuditDemo && activePhase === "done" && (
+        <div className="absolute top-[5.65rem] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-[#7dd3fc]/30 bg-[#071827]/80 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#bae6fd] shadow-2xl backdrop-blur-xl">
+          <Route size={14} />
+          ari &mdash; adine
         </div>
       )}
 
@@ -397,7 +431,7 @@ function TreeView() {
         </div>
       )}
 
-      {query && phase !== "done" && phase !== "error" && (
+      {query && activePhase !== "done" && activePhase !== "error" && (
         <div className={styles.stateCard}>
           <div className={styles.stateIcon}>
             <Loader2 className="animate-spin" size={27} strokeWidth={1.35} />
@@ -407,7 +441,7 @@ function TreeView() {
         </div>
       )}
 
-      {query && phase === "error" && !isMock && (
+      {query && activePhase === "error" && !isMock && (
         <div className={styles.stateCard}>
           <div className={styles.stateIcon}><AlertTriangle size={27} strokeWidth={1.35} /></div>
           <p className={styles.stateText}>The thread broke before the map was complete.</p>
@@ -416,9 +450,12 @@ function TreeView() {
       )}
 
       {/* Graph Render */}
-      {query && phase === "done" && graphData && (
+      {query && activePhase === "done" && activeGraphData && (
         <div className={styles.graphRegion}>
-          <GraphVisualizer data={graphData} />
+          <GraphVisualizer
+            data={activeGraphData}
+            nodeAccentColors={isCitationAuditDemo ? CITATION_AUDIT_NODE_COLORS : undefined}
+          />
         </div>
       )}
     </main>

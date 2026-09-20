@@ -28,7 +28,7 @@ import {
   type GraphNode,
 } from "@/lib/graph";
 import { displayTitle, formatDate, formatTimestamp, passagePreview, percent } from "@/lib/format";
-import { computePrimaryParents, computeProvenanceLayout } from "@/lib/layout";
+import { computePrimaryParents, computeProvenanceLayout, LAYER_GAP, NODE_GAP } from "@/lib/layout";
 import { ConfidenceBar, Drawer, Field, StringList, TypedCard } from "./panel-ui";
 import RejectedEvidencePanel, { type EvidenceTab } from "./RejectedEvidencePanel";
 
@@ -146,6 +146,8 @@ export const DEFAULT_GRAPH_NODE_SPECULAR = {
 type GraphVisualizerProps = {
   data: GraphData;
   specular?: GraphNodeSpecularSettings;
+  /** Optional per-node color override, keyed by node id, for demos that carry their own color coding. */
+  nodeAccentColors?: Record<string, string>;
 };
 
 type GraphPointerPosition = { x: number; y: number };
@@ -187,6 +189,15 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.lineTo(x, y + safeR);
   ctx.quadraticCurveTo(x, y, x + safeR, y);
   ctx.closePath();
+}
+
+/** Tints a card's dark background toward a demo-supplied accent color instead of the usual role hue. */
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function smoothRange(value: number, start: number, end: number) {
@@ -331,8 +342,37 @@ function titleLines(context: CanvasRenderingContext2D, value: string, maxWidth: 
   return lines.slice(0, 2).map((line) => fitText(context, line, maxWidth));
 }
 
+/**
+ * A crosslink whose endpoints sit almost side by side vertically but many columns apart
+ * horizontally would otherwise draw as a shallow diagonal that cuts straight through every card
+ * in between. Past this horizontal/vertical ratio, route it below the row band instead: dip down
+ * clear of any card, travel across, then rise straight into the target from underneath.
+ */
+const LONG_CROSSLINK_MIN_SPAN = LAYER_GAP * 2;
+const LONG_CROSSLINK_MAX_VERTICAL_GAP = NODE_GAP * 1.5;
+const LONG_CROSSLINK_DIP = NODE_GAP * 2.1;
+
+function isLongFlatCrosslink(source: { x: number; y: number }, target: { x: number; y: number }) {
+  return (
+    Math.abs(target.x - source.x) > LONG_CROSSLINK_MIN_SPAN &&
+    Math.abs(target.y - source.y) < LONG_CROSSLINK_MAX_VERTICAL_GAP
+  );
+}
+
 // Spline calculation helpers
-function getSplinePoints(source: { x: number; y: number }, target: { x: number; y: number }) {
+function getSplinePoints(source: { x: number; y: number }, target: { x: number; y: number }, detour = false) {
+  if (detour) {
+    // Dip below both endpoints, cross underneath the intervening columns, then rise straight up
+    // into the target — an underneath detour instead of a diagonal drawn through the middle.
+    const dip = Math.max(source.y, target.y) + LONG_CROSSLINK_DIP;
+    const dx = Math.max(Math.abs(target.x - source.x) * 0.25, 45);
+    return [
+      { x: source.x, y: source.y },
+      { x: source.x + dx, y: dip },
+      { x: target.x, y: dip },
+      { x: target.x, y: target.y },
+    ] as const;
+  }
   const dx = Math.max(Math.abs(target.x - source.x) * 0.45, 45);
   return [
     { x: source.x, y: source.y },
@@ -362,7 +402,7 @@ function smoothStepCamera(t: number) {
   return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-export default function GraphVisualizer({ data, specular }: GraphVisualizerProps) {
+export default function GraphVisualizer({ data, specular, nodeAccentColors }: GraphVisualizerProps) {
   const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<GraphPointerPosition | null>(null);
@@ -657,7 +697,7 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
       a.pop += (targetPop - a.pop) * 0.12;
       a.flash *= 0.90;
 
-      const roleColor = ROLE_COLOR[node.role];
+      const roleColor = nodeAccentColors?.[node.id] ?? ROLE_COLOR[node.role];
       const cx = node.x;
       const cy = node.y;
       const cardScale = 0.8 + 0.2 * a.pop + 0.04 * a.hover;
@@ -723,18 +763,23 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
         const y = -CARD_HEIGHT / 2;
         const cardRadius = submitted ? 18 : CARD_RADIUS;
 
+        const accentColor = nodeAccentColors?.[node.id];
         const fill = context.createLinearGradient(x, y, x + CARD_WIDTH, y + CARD_HEIGHT);
         fill.addColorStop(
           0,
-          submitted
-            ? (a.hover > 0.5 ? "rgba(25, 49, 82, 0.98)" : "rgba(17, 35, 62, 0.96)")
-            : (a.hover > 0.5 ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)")
+          accentColor
+            ? hexToRgba(accentColor, a.hover > 0.5 ? 0.42 : 0.34)
+            : submitted
+              ? (a.hover > 0.5 ? "rgba(25, 49, 82, 0.98)" : "rgba(17, 35, 62, 0.96)")
+              : (a.hover > 0.5 ? "rgba(37, 24, 50, 0.98)" : "rgba(23, 16, 33, 0.96)")
         );
         fill.addColorStop(
           1,
-          submitted
-            ? (a.hover > 0.5 ? "rgba(13, 28, 52, 0.98)" : "rgba(9, 21, 40, 0.96)")
-            : (a.hover > 0.5 ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)")
+          accentColor
+            ? hexToRgba(accentColor, a.hover > 0.5 ? 0.24 : 0.18)
+            : submitted
+              ? (a.hover > 0.5 ? "rgba(13, 28, 52, 0.98)" : "rgba(9, 21, 40, 0.96)")
+              : (a.hover > 0.5 ? "rgba(17, 12, 27, 0.98)" : "rgba(10, 8, 17, 0.96)")
         );
         
         roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius);
@@ -803,7 +848,7 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
 
       context.restore();
     },
-    [animPhase, focusedNodeIds, hoveredNode?.id, selectedNode?.id, specularPointer, specularSettings]
+    [animPhase, focusedNodeIds, hoveredNode?.id, selectedNode?.id, specularPointer, specularSettings, nodeAccentColors]
   );
 
   const paintNodePointerArea = useCallback(
@@ -837,9 +882,12 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
       const target = link.target as unknown as GraphNode;
       if (source.x === undefined || source.y === undefined || target.x === undefined || target.y === undefined) return;
 
+      const detour = !isPrimaryLink(link) && link.kind !== "candidate_match" &&
+        isLongFlatCrosslink({ x: source.x, y: source.y }, { x: target.x, y: target.y });
       const [p0, p1, p2, p3] = getSplinePoints(
         { x: source.x, y: source.y },
-        { x: target.x, y: target.y }
+        { x: target.x, y: target.y },
+        detour
       );
       context.beginPath();
       context.moveTo(p0.x, p0.y);
@@ -848,7 +896,7 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
       context.strokeStyle = color;
       context.stroke();
     },
-    [animPhase]
+    [animPhase, isPrimaryLink]
   );
 
   const paintLink = useCallback(
@@ -887,9 +935,11 @@ export default function GraphVisualizer({ data, specular }: GraphVisualizerProps
       const baseWidth = candidateMatch || secondary ? 0.55 + 0.7 * link.confidence : 1 + 1.5 * link.confidence;
       const targetWidth = baseWidth * (0.6 + 0.4 * a.pop) + (0.9 + (link === selectedLink ? 1.3 : 0)) * a.hover;
 
+      const detour = secondary && isLongFlatCrosslink({ x: source.x, y: source.y }, { x: target.x, y: target.y });
       const [p0, p1, p2, p3] = getSplinePoints(
         { x: source.x, y: source.y },
-        { x: target.x, y: target.y }
+        { x: target.x, y: target.y },
+        detour
       );
 
       context.beginPath();

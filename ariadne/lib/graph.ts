@@ -36,6 +36,8 @@ export type ClaimRelationship = "supports" | "contradicts" | "modifies" | "exten
 export interface GraphNode extends LineageTreeNode {
   /** Listed in `tree.root_ids` — the top of a reconstructed propagation chain. */
   is_root: boolean;
+  /** This root's position in `tree.root_ids`. Lets the layout honor a declared root order ahead of timestamp. Undefined for non-root nodes. */
+  root_order?: number;
   role: NodeRole;
   /** Written by the force simulation at runtime. */
   x?: number;
@@ -174,6 +176,7 @@ function candidateBasis(strength: number): string {
  */
 export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [], backendNodes: LineageTreeNode[] = []): GraphData {
   const rootIds = new Set(tree.root_ids);
+  const rootOrder = new Map(tree.root_ids.map((id, index) => [id, index]));
   const treeNodeIds = new Set(tree.nodes.map((node) => node.id));
   const backendNodesById = new Map(backendNodes.map((node) => [node.id, node]));
 
@@ -203,7 +206,12 @@ export function toGraphData(tree: LineageTree, backendEdges: BackendEdge[] = [],
   const nodes: GraphNode[] = graphTreeNodes.map((node) => {
     const is_root = rootIds.has(node.id);
     // Shallow copy: the force simulation writes x/y/vx/vy onto whatever it is handed.
-    return { ...node, is_root, role: roleOf(node, is_root, candidateIds.has(node.id)) };
+    return {
+      ...node,
+      is_root,
+      ...(is_root ? { root_order: rootOrder.get(node.id) } : {}),
+      role: roleOf(node, is_root, candidateIds.has(node.id)),
+    };
   });
 
   const known = new Set(nodes.map((node) => node.id));

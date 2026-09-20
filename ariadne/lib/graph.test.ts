@@ -68,6 +68,7 @@ function tree(nodes: LineageTreeNode[], edges: LineageTreeEdge[]): LineageTree {
       fetched: 1,
       fetch_failures: 0,
       analysis_requests: 1,
+      citation_edges: 0,
     },
   };
 }

@@ -114,6 +114,48 @@ describe("computeProvenanceLayout", () => {
     expect(computeProvenanceLayout([], []).size).toBe(0);
   });
 
+  it("puts the seed at depth 0 even when it is the primary-parent child of an earlier source", () => {
+    // Data direction: Source -> Submitted text (source is chronologically earlier, so it's
+    // parent_id in provenance terms). Display must still start at the seed and grow rightward.
+    const source = node("source");
+    const seed = node("seed", { is_seed: true });
+    const at = computeProvenanceLayout([source, seed], [edge("source", "seed")]);
+    expect(at.get("seed")!.x).toBeLessThan(at.get("source")!.x);
+  });
+
+  it("re-roots an entire chain at the seed, regardless of stored edge direction", () => {
+    // source2 -> source1 -> seed in the data, but the investigation reads seed -> source1 -> source2.
+    const at = computeProvenanceLayout(
+      [node("seed", { is_seed: true }), node("source1"), node("source2")],
+      [edge("source2", "source1"), edge("source1", "seed")]
+    );
+    expect(at.get("seed")!.x).toBeLessThan(at.get("source1")!.x);
+    expect(at.get("source1")!.x).toBeLessThan(at.get("source2")!.x);
+  });
+
+  it("places every candidate that lost the seed's single-primary-parent contest at depth 1, not stuck at depth 0", () => {
+    // Real-world shape: several fetched documents each carry a low-priority "candidate" edge
+    // into the submitted seed. computePrimaryParents can only crown one of them the seed's
+    // primary parent — the rest must not be stranded as unrelated roots sharing the seed's column.
+    const seed = node("seed", { is_seed: true });
+    const winner = node("winner");
+    const loserA = node("loserA");
+    const loserB = node("loserB");
+    const candidateLink = (parent_id: string): LayoutLink => ({
+      parent_id,
+      child_id: "seed",
+      confidence: 0.2,
+      provenance_status: "candidate",
+    });
+    const at = computeProvenanceLayout(
+      [seed, winner, loserA, loserB],
+      [candidateLink("winner"), candidateLink("loserA"), candidateLink("loserB")]
+    );
+    expect(at.get("seed")!.x).toBeLessThan(at.get("winner")!.x);
+    expect(at.get("seed")!.x).toBeLessThan(at.get("loserA")!.x);
+    expect(at.get("seed")!.x).toBeLessThan(at.get("loserB")!.x);
+  });
+
   it("draws a multi-source convergence as a coherent tree, not a star", () => {
     // Source A, Source B -> Article C -> Article D -> Submitted claim (task fixture shape).
     const at = computeProvenanceLayout(

@@ -1,9 +1,17 @@
 /**
  * Deterministic layered layout for the provenance graph.
  *
- * Provenance direction is authoritative: x comes from topological depth over accepted edges,
- * so a child is never drawn left of its parent, whatever its timestamp claims. Timestamps only
- * break ties vertically inside a layer. Pure and React-free so it can be exercised directly.
+ * Primary-parent selection is still driven by provenance (status > confidence > timestamp, see
+ * `computePrimaryParents`) and edge direction in the data is never touched — it still governs
+ * which single edge into a node is "the" strong hierarchy line for styling. But the on-screen x
+ * axis is a separate, investigation-facing concept: when a submitted seed node is present, depth
+ * is that node's shortest hop-distance from the seed over *every* edge (validated, candidate,
+ * related — anything that connects them), not a walk restricted to primary-parent edges. A
+ * source can be `parent_id` of the seed in the data (it is chronologically earlier) and still be
+ * drawn to the seed's right, because visually the seed is where the investigation starts, and a
+ * document the seed only reaches through a losing candidate match still discovered it and still
+ * belongs one column to the right, not stranded in the seed's own column. Timestamps only break
+ * ties vertically inside a layer. Pure and React-free so it can be exercised directly.
  */
 
 import { endpointId, type GraphLink, type GraphNode, type ProvenanceStatus } from "./graph";
@@ -41,7 +49,7 @@ export function statusPriority(status: string | undefined): number {
 
 /** Minimal node shape the layout needs; GraphNode satisfies it. */
 export type LayoutNode = Pick<GraphNode, "id" | "title" | "publisher" | "timestamp" | "timestamp_conflict"> &
-  Partial<Pick<GraphNode, "is_root" | "is_seed">>;
+  Partial<Pick<GraphNode, "is_root" | "is_seed" | "root_order">>;
 
 /** Minimal link shape the layout needs; GraphLink satisfies it. */
 export type LayoutLink = Pick<GraphLink, "parent_id" | "child_id"> &
@@ -235,6 +243,56 @@ function computeDepthsFromPrimary(ids: readonly string[], primary: ReadonlyMap<s
   return depth;
 }
 
+/**
+ * Depth re-rooted at the submitted seed node(s): the seed is forced to depth 0, and every node
+ * reachable from it — by walking *any* accepted or candidate edge as undirected, not just
+ * whoever's primary-parent chain it happens to sit on — is placed at its shortest hop-distance
+ * from the seed. This matters because a "first discovered document" is anyone the seed has an
+ * edge to at all; computePrimaryParents only ever lets one such edge win the single-parent slot
+ * per child (a provenance-authority concept), so walking the primary tree alone stranded every
+ * losing candidate as its own unrelated root sharing the seed's column instead of sitting one
+ * column to its right. Nodes the seed can't reach at all (a fully separate lineage) fall back to
+ * the primary-parent tree's own root-based depth, unchanged from before seeds were considered.
+ */
+function computeDepths(
+  ids: readonly string[],
+  edges: readonly Edge[],
+  primary: ReadonlyMap<string, string | null>,
+  seedIds: readonly string[]
+): Map<string, number> {
+  const fallback = computeDepthsFromPrimary(ids, primary);
+  const seeds = [...new Set(seedIds)].filter((id) => ids.includes(id));
+  if (seeds.length === 0) return fallback;
+
+  const neighboursOf = new Map<string, string[]>(ids.map((id) => [id, []]));
+  for (const { parent, child } of edges) {
+    neighboursOf.get(parent)!.push(child);
+    neighboursOf.get(child)!.push(parent);
+  }
+  for (const list of neighboursOf.values()) list.sort();
+
+  const depth = new Map<string, number>();
+  const visited = new Set<string>();
+  const queue = [...seeds].sort();
+  for (const id of queue) {
+    depth.set(id, 0);
+    visited.add(id);
+  }
+  for (let head = 0; head < queue.length; head += 1) {
+    const id = queue[head]!;
+    for (const neighbour of neighboursOf.get(id) ?? []) {
+      if (visited.has(neighbour)) continue;
+      visited.add(neighbour);
+      depth.set(neighbour, depth.get(id)! + 1);
+      queue.push(neighbour);
+    }
+  }
+
+  // Anything the seed can't reach at all keeps its old root-based depth.
+  for (const id of ids) if (!depth.has(id)) depth.set(id, fallback.get(id) ?? 0);
+  return depth;
+}
+
 /** Weakly connected components, so separate root subtrees get their own horizontal band. */
 function components(ids: readonly string[], edges: readonly Edge[]): string[][] {
   const neighbours = new Map<string, string[]>(ids.map((id) => [id, []]));
@@ -282,7 +340,8 @@ export function computeProvenanceLayout(
   // deeper because of a secondary crosslink, so multi-parent convergence (several sources into
   // one later document) draws as a coherent converging structure instead of a star.
   const primaryParents = computePrimaryParents(nodes, links);
-  const depth = computeDepthsFromPrimary(ids, primaryParents);
+  const seedIds = nodes.filter((node) => node.is_seed).map((node) => node.id);
+  const depth = computeDepths(ids, edges, primaryParents, seedIds);
 
   const parentsOf = new Map<string, string[]>(ids.map((id) => [id, []]));
   for (const { parent, child } of edges) parentsOf.get(child)!.push(parent);
@@ -319,6 +378,12 @@ export function computeProvenanceLayout(
         // 2. Roots and seeds lead their layer.
         const rank = (node: LayoutNode) => (node.is_seed ? 0 : node.is_root ? 1 : 2);
         if (rank(nodeA) !== rank(nodeB)) return rank(nodeA) - rank(nodeB);
+
+        // 2.5. Among roots, honor the tree's declared root_ids order ahead of timestamp — that
+        // sequence is a deliberate signal from the data, not an accident of discovery order.
+        if (nodeA.root_order !== undefined && nodeB.root_order !== undefined && nodeA.root_order !== nodeB.root_order) {
+          return nodeA.root_order - nodeB.root_order;
+        }
 
         // 3. Earlier trustworthy timestamp, then label, then id — all deterministic.
         const timeA = sortTime(nodeA);
