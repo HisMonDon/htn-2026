@@ -151,7 +151,7 @@ describe("recursive research HTTP contract", () => {
     body.tree = compatibilityTree(body, request, body.tree.stats, fixedNow().toISOString());
     const api = await start(deps, "mock", fixedNow, { ...controller, create: async () => body });
     const result = await parsed(await api.post());
-    expect(result.edges[0]).toEqual({ id: "pending-edge", source: null, target: body.root.id, reference_url: b, status: "candidate", reason: "Awaiting acquisition" });
+    expect(result.edges[0]).toEqual({ id: "pending-edge", source: null, target: body.root.id, reference_url: b, status: "candidate", reason: "Awaiting acquisition", directionality: "unknown", evidence_tags: [] });
     expect(result.tree.edges).toEqual([]);
   });
 
@@ -306,18 +306,20 @@ describe("recursive research HTTP contract", () => {
 
     expect(candidate).toEqual(expect.objectContaining({
       status: "candidate",
-      source: expect.any(String),
-      target: body.root.id,
+      source: body.root.id,
+      target: expect.any(String),
       reference_url: b,
       reason: expect.stringContaining("not validated provenance"),
+      directionality: "unknown",
+      evidence_tags: [],
     }));
     expect(validated).toHaveLength(1);
-    expect(validated[0]).toMatchObject({ reference_url: c, target: candidate?.source });
+    expect(validated[0]).toMatchObject({ reference_url: c, target: candidate?.target });
     expect(validated.every((edge) => edge.target !== body.root.id)).toBe(true);
     expect(analyze.mock.calls.map(([document]) => document.url)).toEqual(expect.arrayContaining([b, c]));
     expect(body.terminations).toContainEqual(expect.objectContaining({ reason: "candidate-roots", source_id: body.root.id }));
     expect(body.tree.edges).toHaveLength(1);
-    expect(body.tree.edges[0]).toMatchObject({ parent_id: validated[0]?.source, child_id: candidate?.source });
+    expect(body.tree.edges[0]).toMatchObject({ parent_id: validated[0]?.source, child_id: candidate?.target });
   });
 
   it("recurses from both mocked Cohen candidates while preserving their claim links as discovery only", async () => {
@@ -343,6 +345,7 @@ describe("recursive research HTTP contract", () => {
     const validated = body.edges.filter((edge) => edge.status === "validated");
 
     expect(candidates.map((edge) => edge.reference_url).sort()).toEqual([filing, reason].sort());
+    expect(candidates.every((edge) => edge.source === body.root.id && edge.directionality === "unknown")).toBe(true);
     expect(validated).toHaveLength(2);
     expect(validated.every((edge) => edge.target !== body.root.id)).toBe(true);
     expect(body.nodes.map((node) => node.url)).toEqual(expect.arrayContaining([reason, filing, motion]));
@@ -371,5 +374,45 @@ describe("recursive research HTTP contract", () => {
     const body = serializeTraversal(direct, { id: "synthetic", input: request, seed, execution: { proposer: "mock", fallbacks: [], provenance_mode: "strict" }, generatedAt: fixedNow().toISOString() });
     expect(body.edges[0]).toMatchObject({ status: "validated", ariadne_score: 0.456, score_method: "traversal-scoreEdge" });
     expect(body.tree.edges[0]?.confidence).toBe(0.456);
+  });
+
+  it("serializes a deep-mode related edge with directionality and evidence tags, excluded from the compatibility tree", async () => {
+    const childUrl = "https://synthetic.test/deep-related-child";
+    const parentUrl = "https://synthetic.test/deep-related-parent";
+    const localFabricated = ["United States v. Related-Test"];
+    const phrase = "an unusual quiet archive review noted-related";
+    const childPage = page(childUrl, "Child", "2024-03-05", `${localFabricated[0]}. ${phrase}.`);
+    const parentPage = page(parentUrl, "Parent", "2024-03-01", `${phrase}.`);
+    const seed = extractDocument({ ...childPage, fabricated: localFabricated, claimTerms: [], discoveredVia: "api-seed" });
+    const analyze = vi.fn(async (document) => (document.url === childUrl ? [{ url: parentUrl }] : []));
+
+    const direct = await traverseProvenance(
+      { seed, claim: localFabricated[0]!, fabricated: localFabricated, provenanceMode: "deep" },
+      { proposer: { analyze }, fetcher: new CorpusFetcher([childPage, parentPage]) },
+    );
+    expect(direct.accepted_edges).toHaveLength(1);
+    expect(direct.accepted_edges[0]!.provenance_status).toBe("related");
+
+    const body = serializeTraversal(direct, {
+      id: "synthetic-related",
+      input: { claim: localFabricated[0]!, seed_url: childUrl, fabricated_citations: localFabricated },
+      seed,
+      execution: { proposer: "mock", fallbacks: [], provenance_mode: "deep" },
+      generatedAt: fixedNow().toISOString(),
+    });
+
+    const relatedEdge = body.edges.find((edge) => edge.status === "related");
+    expect(relatedEdge).toBeDefined();
+    if (relatedEdge?.status === "related") {
+      expect(relatedEdge.evidence_tags).toContain("rare_phrase_overlap");
+      // Related links keep discovery order and never claim an upstream -> downstream direction.
+      expect(relatedEdge.source).toBe(direct.accepted_edges[0]!.child_id);
+      expect(relatedEdge.target).toBe(direct.accepted_edges[0]!.parent_id);
+      expect(relatedEdge.directionality).toBe("unknown");
+      expect(relatedEdge.inspection).toBeNull();
+      expect(relatedEdge.claim_mutations).toEqual([]);
+    }
+    // The compatibility tree stays restricted to validated provenance; related is investigative only.
+    expect(body.tree.edges).toEqual([]);
   });
 });

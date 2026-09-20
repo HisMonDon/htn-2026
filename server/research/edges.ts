@@ -130,6 +130,15 @@ export const MIN_COVERAGE = 2 / 3;
  */
 export const EXPLORATORY_THRESHOLD = 0.2;
 
+/**
+ * Deep-mode-only acceptance floor for the `related` tier, below `EXPLORATORY_THRESHOLD`. Admits a
+ * single thin-but-real signal (one rare shared phrase, one citation-spelling variant, or minimal
+ * fabricated-citation overlap) that `has_meaningful_evidence` already requires be non-similarity
+ * evidence. Pure textual similarity still can never cross this floor: `has_meaningful_evidence` is
+ * false whenever the only signal present is `similarity`.
+ */
+export const RELATED_THRESHOLD = 0.05;
+
 function noisyOr(weights: number[]): number {
   return 1 - weights.reduce((product, weight) => product * (1 - weight), 1);
 }

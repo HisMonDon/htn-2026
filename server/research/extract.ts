@@ -2,6 +2,8 @@ import * as cheerio from "cheerio";
 import type { z } from "zod";
 import type { TimestampConfidence, TimestampSource } from "../../shared/tree";
 import { canonicalDocumentId, contentFingerprint } from "./fingerprint";
+import type { AcademicPaperMetadata } from "./academic";
+import { normalizeArxivId, normalizeDoi, semanticScholarPaperIdFromUrl } from "./academic";
 import { canonicalText, extractCaseNames, matchFabricated, matchKey } from "./text";
 import { selectTimestampEvidence, toIso, urlTimestampEvidence, type TimestampEvidence } from "./timestamps";
 
@@ -31,6 +33,8 @@ export interface CandidateDocument {
   /** Spelling variants of fabricated citations seen on this page, e.g. "X v. Florez" for "X v. Flores". */
   citation_variants: string[];
   discovered_via: string[];
+  /** Citation-specific bibliographic metadata, when deterministic extraction found it. */
+  academic_metadata?: AcademicPaperMetadata | null;
 }
 
 export function documentId(url: string): string {
@@ -155,6 +159,7 @@ export interface ParsedDocument {
   /** Optional extractor-specific structure that must participate in exact artifact identity. */
   fingerprint_text?: string;
   outbound_links: string[];
+  academic_metadata?: AcademicPaperMetadata | null;
 }
 
 export interface AssembleOptions {
@@ -211,6 +216,39 @@ export function assembleDocument(parsed: ParsedDocument, options: AssembleOption
     fabricated_citations: [...fabricated],
     citation_variants: [...variants],
     discovered_via: [options.discoveredVia],
+    academic_metadata: parsed.academic_metadata ?? null,
+  };
+}
+
+function firstMeta($: cheerio.CheerioAPI, selectors: readonly string[]): string | null {
+  for (const selector of selectors) {
+    const value = $(selector).first().attr("content")?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function academicMetadata($: cheerio.CheerioAPI, url: string, title: string): AcademicPaperMetadata | null {
+  const doi = normalizeDoi(firstMeta($, [
+    'meta[name="citation_doi"]', 'meta[name="dc.identifier"]', 'meta[name="DC.identifier"]', 'meta[name="doi"]',
+  ]));
+  const arxiv = normalizeArxivId(firstMeta($, ['meta[name="citation_arxiv_id"]', 'meta[name="arxiv_id"]'])) ?? normalizeArxivId(url);
+  const semanticId = semanticScholarPaperIdFromUrl(url);
+  const authors = $('meta[name="citation_author"]').toArray()
+    .map((element) => $(element).attr("content")?.trim() ?? "")
+    .filter(Boolean);
+  const venue = firstMeta($, ['meta[name="citation_journal_title"]', 'meta[name="citation_conference_title"]', 'meta[name="citation_technical_report_institution"]']);
+  const rawYear = firstMeta($, ['meta[name="citation_publication_date"]', 'meta[name="citation_date"]']);
+  const year = rawYear?.match(/\b(19|20)\d{2}\b/u)?.[0];
+  if (!doi && !arxiv && !semanticId && !authors.length && !venue) return null;
+  return {
+    semantic_scholar_paper_id: semanticId,
+    doi,
+    arxiv_id: arxiv,
+    title: title || null,
+    authors,
+    year: year ? Number.parseInt(year, 10) : null,
+    venue,
   };
 }
 
@@ -272,6 +310,7 @@ export function parseHtmlPage(url: string, html: string, searchPublished?: strin
     // Matching retains the established canonical text, while identity only collapses whitespace.
     fingerprint_text: rawParagraphs.join("\n"),
     outbound_links: [...outbound],
+    academic_metadata: academicMetadata($, canonical, title),
   };
 }
 
@@ -292,4 +331,38 @@ export function extractDocument(options: ExtractOptions): CandidateDocument {
     claimTerms: options.claimTerms,
     discoveredVia: options.discoveredVia,
   });
+}
+
+/**
+ * Make a graph node from citation metadata alone. No paper body, abstract, or inferred prose is
+ * inserted: consumers can distinguish it from an acquired document through
+ * `academic_metadata.metadata_only`.
+ */
+export function assembleCitationMetadataDocument(metadata: AcademicPaperMetadata, discoveredVia: string): CandidateDocument {
+  const paperId = metadata.semantic_scholar_paper_id?.trim();
+  const url = metadata.canonical_url?.trim();
+  if (!paperId || !url) throw new Error("citation metadata needs a Semantic Scholar paper ID and canonical URL");
+  const fingerprint = contentFingerprint(`semantic-scholar-paper:${paperId}`);
+  const timestamp = toIso(metadata.publication_date);
+  return {
+    id: documentId(url),
+    canonical_id: canonicalDocumentId(fingerprint),
+    content_fingerprint: fingerprint,
+    url,
+    mirror_urls: [],
+    publisher: metadata.venue?.trim() || "Academic paper metadata",
+    title: metadata.title?.trim() || `Semantic Scholar paper ${paperId}`,
+    timestamp,
+    timestamp_source: timestamp ? "document-publication-label" : "none",
+    timestamp_confidence: timestamp ? "moderate" : "none",
+    timestamp_conflict: null,
+    text: "",
+    passage: "",
+    outbound_links: [],
+    case_names: [],
+    fabricated_citations: [],
+    citation_variants: [],
+    discovered_via: [discoveredVia],
+    academic_metadata: { ...metadata, metadata_only: true },
+  };
 }

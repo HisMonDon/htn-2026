@@ -78,6 +78,47 @@ const CARD_WIDTH = 194;
 const CARD_HEIGHT = 80;
 const CARD_RADIUS = 10;
 
+/**
+ * Canvas equivalent of React Bits' SpecularButton controls. Pass this as the
+ * `specular` prop to tune every provenance card without changing its content
+ * or graph behaviour.
+ */
+export interface GraphNodeSpecularSettings {
+  /** One rim colour for every card. Omit it to retain each node role's colour. */
+  color?: string;
+  /** The low-light edge colour. Omit it to retain each node role's colour. */
+  baseColor?: string;
+  intensity?: number;
+  shineSize?: number;
+  shineFade?: number;
+  thickness?: number;
+  speed?: number;
+  /** How quickly the rim light catches up with pointer movement. */
+  sensitivity?: number;
+  followMouse?: boolean;
+  proximity?: number;
+  autoAnimate?: boolean;
+}
+
+export const DEFAULT_GRAPH_NODE_SPECULAR = {
+  intensity: 1.15,
+  shineSize: 10,
+  shineFade: 40,
+  thickness: 1.15,
+  speed: 0.35,
+  sensitivity: 1,
+  followMouse: true,
+  proximity: 250,
+  autoAnimate: false,
+} satisfies Required<Omit<GraphNodeSpecularSettings, "color" | "baseColor">>;
+
+type GraphVisualizerProps = {
+  data: GraphData;
+  specular?: GraphNodeSpecularSettings;
+};
+
+type GraphPointerPosition = { x: number; y: number };
+
 function Passage({ value }: { value: string }) {
   const preview = passagePreview(value);
 
@@ -115,6 +156,113 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.lineTo(x, y + safeR);
   ctx.quadraticCurveTo(x, y, x + safeR, y);
   ctx.closePath();
+}
+
+function smoothRange(value: number, start: number, end: number) {
+  if (start === end) return value >= end ? 1 : 0;
+  const t = Math.max(0, Math.min(1, (value - start) / (end - start)));
+  return t * t * (3 - 2 * t);
+}
+
+function shortestAngleDelta(from: number, to: number) {
+  return ((to - from + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+}
+
+function specularStrength(normalAngle: number, lightAngle: number, shineSize: number, shineFade: number) {
+  const alignment = Math.abs(Math.cos(normalAngle - lightAngle));
+  const phi = Math.acos(Math.max(0, Math.min(1, alignment)));
+  const size = (Math.max(0, shineSize) * Math.PI) / 180;
+  const fade = (Math.max(0, shineFade) * Math.PI) / 180;
+  return 1 - smoothRange(phi, Math.max(0, size - fade), size + fade + 0.0001);
+}
+
+function drawSpecularRim(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  {
+    color,
+    baseColor,
+    intensity,
+    shineSize,
+    shineFade,
+    thickness,
+    angle,
+  }: {
+    color: string;
+    baseColor: string;
+    intensity: number;
+    shineSize: number;
+    shineFade: number;
+    thickness: number;
+    angle: number;
+  }
+) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  const lineWidth = Math.max(0.25, thickness);
+
+  context.save();
+  context.setLineDash([]);
+  context.lineCap = "round";
+  context.lineWidth = lineWidth;
+  context.strokeStyle = baseColor;
+  context.globalAlpha *= 0.42;
+  roundedRect(context, x, y, width, height, safeRadius);
+  context.stroke();
+  context.restore();
+
+  if (intensity <= 0) return;
+
+  const drawSegment = (fromX: number, fromY: number, toX: number, toY: number, normalAngle: number) => {
+    const strength = specularStrength(normalAngle, angle, shineSize, shineFade) * intensity;
+    if (strength <= 0.001) return;
+    context.save();
+    context.lineWidth = lineWidth;
+    context.lineCap = "round";
+    context.strokeStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 4 + 7 * strength;
+    context.globalAlpha *= Math.min(1, strength);
+    context.beginPath();
+    context.moveTo(fromX, fromY);
+    context.lineTo(toX, toY);
+    context.stroke();
+    context.restore();
+  };
+
+  drawSegment(x + safeRadius, y, x + width - safeRadius, y, -Math.PI / 2);
+  drawSegment(x + width, y + safeRadius, x + width, y + height - safeRadius, 0);
+  drawSegment(x + width - safeRadius, y + height, x + safeRadius, y + height, Math.PI / 2);
+  drawSegment(x, y + height - safeRadius, x, y + safeRadius, Math.PI);
+
+  const corners = [
+    { x: x + width - safeRadius, y: y + safeRadius, start: -Math.PI / 2 },
+    { x: x + width - safeRadius, y: y + height - safeRadius, start: 0 },
+    { x: x + safeRadius, y: y + height - safeRadius, start: Math.PI / 2 },
+    { x: x + safeRadius, y: y + safeRadius, start: Math.PI },
+  ];
+
+  for (const corner of corners) {
+    for (let step = 0; step < 6; step++) {
+      const start = corner.start + (Math.PI / 2) * (step / 6);
+      const end = corner.start + (Math.PI / 2) * ((step + 1) / 6);
+      const strength = specularStrength((start + end) / 2, angle, shineSize, shineFade) * intensity;
+      if (strength <= 0.001) continue;
+      context.save();
+      context.lineWidth = lineWidth;
+      context.strokeStyle = color;
+      context.shadowColor = color;
+      context.shadowBlur = 4 + 7 * strength;
+      context.globalAlpha *= Math.min(1, strength);
+      context.beginPath();
+      context.arc(corner.x, corner.y, safeRadius, start, end);
+      context.stroke();
+      context.restore();
+    }
+  }
 }
 
 function drawStar(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, points: number, inset: number) {
@@ -183,9 +331,11 @@ function smoothStepCamera(t: number) {
   return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-export default function GraphVisualizer({ data }: { data: GraphData }) {
+export default function GraphVisualizer({ data, specular }: GraphVisualizerProps) {
   const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef<GraphPointerPosition | null>(null);
+  const specularRefreshFrame = useRef<number | null>(null);
   
   const [animPhase, setAnimPhase] = useState<"sequence" | "complete">("sequence");
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -194,6 +344,39 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
   const [evidenceTab, setEvidenceTab] = useState<EvidenceTab>("rejected");
+  const [specularPointer, setSpecularPointer] = useState<GraphPointerPosition | null>(null);
+
+  const specularSettings = useMemo(
+    () => ({ ...DEFAULT_GRAPH_NODE_SPECULAR, ...specular }),
+    [specular]
+  );
+
+  const requestSpecularRefresh = useCallback(() => {
+    if (specularRefreshFrame.current !== null) return;
+    specularRefreshFrame.current = requestAnimationFrame(() => {
+      specularRefreshFrame.current = null;
+      // Store the newest sampled point once per frame. This updates the canvas
+      // callback without asking React to render for every browser pointer event.
+      setSpecularPointer(pointerRef.current);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (specularRefreshFrame.current !== null) cancelAnimationFrame(specularRefreshFrame.current);
+  }, []);
+
+  const handleGraphPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const graph = fgRef.current;
+    const bounds = wrapperRef.current?.getBoundingClientRect();
+    if (!graph || !bounds) return;
+    pointerRef.current = graph.screen2GraphCoords(event.clientX - bounds.left, event.clientY - bounds.top);
+    requestSpecularRefresh();
+  }, [requestSpecularRefresh]);
+
+  const handleGraphPointerLeave = useCallback(() => {
+    pointerRef.current = null;
+    requestSpecularRefresh();
+  }, [requestSpecularRefresh]);
 
   const nodesById = useMemo(() => new Map(data.nodes.map((node) => [node.id, node])), [data.nodes]);
   const focusId = hoveredNode?.id ?? selectedNode?.id ?? null;
@@ -401,6 +584,9 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
       
       const a = (node as any).__anim || { hover: 0, pop: 0, flash: 0 };
       (node as any).__anim = a;
+      a.specularAngle ??= 2.4;
+      a.specularBrightness ??= 0;
+      a.specularUpdatedAt ??= performance.now();
 
       const isHovered = selectedNode?.id === node.id || hoveredNode?.id === node.id;
       const related = !focusedNodeIds || focusedNodeIds.has(node.id);
@@ -417,6 +603,34 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
       const roleColor = ROLE_COLOR[node.role];
       const cx = node.x;
       const cy = node.y;
+      const cardScale = 0.8 + 0.2 * a.pop + 0.04 * a.hover;
+      const pointer = specularPointer;
+      const now = performance.now();
+      const dt = Math.min((now - a.specularUpdatedAt) / 1000, 0.05);
+      a.specularUpdatedAt = now;
+      const idleAngle = 2.4 + now * 0.001 * specularSettings.speed;
+      let proximity = 0;
+      let pointerAngle = idleAngle;
+
+      if (pointer) {
+        const localX = pointer.x - cx;
+        const localY = pointer.y - cy;
+        const halfWidth = (CARD_WIDTH * cardScale) / 2;
+        const halfHeight = (CARD_HEIGHT * cardScale) / 2;
+        const dx = Math.max(Math.abs(localX) - halfWidth, 0);
+        const dy = Math.max(Math.abs(localY) - halfHeight, 0);
+        const distance = Math.hypot(dx, dy);
+        proximity = smoothRange(1 - distance / Math.max(specularSettings.proximity, 1), 0, 1);
+        pointerAngle = distance === 0
+          ? Math.atan2(2 / CARD_HEIGHT, -2 / CARD_WIDTH) + (localX / halfWidth) * 0.3 - (localY / halfHeight) * 0.15
+          : Math.atan2(-localY, localX);
+      }
+
+      const targetAngle = specularSettings.followMouse && pointer ? pointerAngle : idleAngle;
+      const response = 1 - Math.exp(-dt * 7 * Math.max(0.01, specularSettings.sensitivity));
+      a.specularAngle += shortestAngleDelta(a.specularAngle, targetAngle) * response;
+      const targetBrightness = specularSettings.autoAnimate ? 1 : proximity;
+      a.specularBrightness += (targetBrightness - a.specularBrightness) * (1 - Math.exp(-dt * 8 * Math.max(0.01, specularSettings.sensitivity)));
 
       context.save();
       context.globalAlpha = related ? 1 : 0.17;
@@ -446,8 +660,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         context.translate(cx, cy);
         
         // Slight organic scale bump when hovered
-        const s = 0.8 + 0.2 * a.pop + 0.04 * a.hover;
-        context.scale(s, s);
+        context.scale(cardScale, cardScale);
 
         const x = -CARD_WIDTH / 2;
         const y = -CARD_HEIGHT / 2;
@@ -471,11 +684,15 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
         context.fillStyle = fill;
         context.fill();
         context.shadowBlur = 0;
-        context.lineWidth = 0.75 + a.hover * 0.75;
-        context.strokeStyle = `rgba(${parseInt(roleColor.slice(1,3),16)}, ${parseInt(roleColor.slice(3,5),16)}, ${parseInt(roleColor.slice(5,7),16)}, ${0.2 + a.hover*0.8})`;
-        context.setLineDash(submitted ? [4, 3] : []);
-        context.stroke();
-        context.setLineDash([]);
+        drawSpecularRim(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius, {
+          color: specularSettings.color ?? roleColor,
+          baseColor: specularSettings.baseColor ?? roleColor,
+          intensity: specularSettings.intensity * a.specularBrightness,
+          shineSize: specularSettings.shineSize,
+          shineFade: specularSettings.shineFade,
+          thickness: specularSettings.thickness + a.hover * 0.35,
+          angle: a.specularAngle,
+        });
 
         context.save();
         roundedRect(context, x, y, CARD_WIDTH, CARD_HEIGHT, cardRadius);
@@ -529,7 +746,7 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
       context.restore();
     },
-    [animPhase, focusedNodeIds, hoveredNode?.id, selectedNode?.id]
+    [animPhase, focusedNodeIds, hoveredNode?.id, selectedNode?.id, specularPointer, specularSettings]
   );
 
   const paintNodePointerArea = useCallback(
@@ -662,7 +879,12 @@ export default function GraphVisualizer({ data }: { data: GraphData }) {
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      <div ref={wrapperRef} className="absolute inset-0">
+      <div
+        ref={wrapperRef}
+        className="absolute inset-0"
+        onPointerMove={handleGraphPointerMove}
+        onPointerLeave={handleGraphPointerLeave}
+      >
         <ForceGraph<GraphNode, GraphLink>
           ref={fgRef}
           graphData={positioned}

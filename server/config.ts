@@ -2,10 +2,20 @@ export interface Config {
   useMocks: boolean;
   /**
    * "strict" (default) gates traversal on the existing validated threshold only. "exploratory" also
-   * accepts lower-confidence, evidence-backed edges as "probable" so recursion can go deeper for a
-   * demo. Never defaults to "exploratory": production behavior is unchanged unless this is set.
+   * accepts lower-confidence, evidence-backed edges as "probable". "deep" also accepts thinner,
+   * still non-similarity "related" crosslinks, for a much deeper investigation graph in a demo.
+   * Never defaults past "strict": production behavior is unchanged unless this is set.
    */
-  provenanceMode: "strict" | "exploratory";
+  provenanceMode: "strict" | "exploratory" | "deep";
+  /** Safety budgets applied to every traversal, regardless of mode. */
+  graphLimits: {
+    maxDepth: number;
+    maxExpandedNodes: number;
+    maxEdges: number;
+    maxChildrenPerNode: number;
+    maxRelatedChildrenPerNode: number;
+    maxProbableChildrenPerNode: number;
+  };
   browserbaseApiKey: string | null;
   browserbaseProjectId: string | null;
   gptzeroApiKey: string | null;
@@ -15,6 +25,16 @@ export interface Config {
     maxQueries: number;
     resultsPerQuery: number;
     maxCandidates: number;
+    timeoutMs: number;
+    /** Deep mode only: wider candidate/query breadth to help build the investigation graph. */
+    maxQueriesDeep: number;
+    maxCandidatesDeep: number;
+  };
+  /** Citation-graph provider. It is intentionally key-optional: public API limits still work. */
+  semanticScholar: {
+    apiKey: string | null;
+    maxReferences: number;
+    maxCitations: number;
     timeoutMs: number;
   };
   /** Optional Stagehand model, e.g. "anthropic/claude-sonnet-4-6". Omitted lets Model Gateway choose. */
@@ -65,9 +85,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const requestedMode = nonEmpty(env.TRAVERSAL_MODE) ?? nonEmpty(env.PROVENANCE_MODE);
+  const provenanceMode: Config["provenanceMode"] =
+    requestedMode === "deep" ? "deep" : requestedMode === "exploratory" ? "exploratory" : "strict";
   return {
     useMocks: flag(env.USE_MOCKS),
-    provenanceMode: nonEmpty(env.PROVENANCE_MODE) === "exploratory" ? "exploratory" : "strict",
+    provenanceMode,
+    graphLimits: {
+      maxDepth: int(env.MAX_GRAPH_DEPTH, 5),
+      maxExpandedNodes: int(env.MAX_EXPANDED_NODES, 25),
+      maxEdges: int(env.MAX_EDGES, 60),
+      maxChildrenPerNode: int(env.MAX_CHILDREN_PER_NODE, 6),
+      maxRelatedChildrenPerNode: int(env.MAX_RELATED_CHILDREN_PER_NODE, 4),
+      maxProbableChildrenPerNode: int(env.MAX_PROBABLE_CHILDREN_PER_NODE, 3),
+    },
     browserbaseApiKey: nonEmpty(env.BROWSERBASE_API_KEY),
     browserbaseProjectId: nonEmpty(env.BROWSERBASE_PROJECT_ID),
     gptzeroApiKey: nonEmpty(env.GPTZERO_API_KEY),
@@ -77,6 +108,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       resultsPerQuery: int(env.WEB_SEARCH_RESULTS_PER_QUERY, 4),
       maxCandidates: int(env.WEB_SEARCH_MAX_CANDIDATES, 10),
       timeoutMs: int(env.WEB_SEARCH_TIMEOUT_MS, 10_000),
+      maxQueriesDeep: int(env.WEB_SEARCH_MAX_QUERIES_DEEP, 8),
+      maxCandidatesDeep: int(env.WEB_SEARCH_MAX_CANDIDATES_DEEP, 15),
+    },
+    semanticScholar: {
+      apiKey: nonEmpty(env.SEMANTIC_SCHOLAR_API_KEY),
+      maxReferences: int(env.SEMANTIC_SCHOLAR_MAX_REFERENCES, 10),
+      maxCitations: int(env.SEMANTIC_SCHOLAR_MAX_CITATIONS, 10),
+      timeoutMs: int(env.SEMANTIC_SCHOLAR_TIMEOUT_MS, 10_000),
     },
     stagehandModel: nonEmpty(env.STAGEHAND_MODEL),
     browserbaseSessionTimeoutS: int(env.BROWSERBASE_SESSION_TIMEOUT_S, 900),

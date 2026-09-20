@@ -804,3 +804,298 @@ describe("exploratory provenance mode", () => {
     expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "exploratory-branch-cap" }));
   });
 });
+
+describe("deep provenance mode", () => {
+  /**
+   * A short (exactly 6-word) phrase, shared verbatim between a child and one candidate parent and
+   * nowhere else. It contributes exactly one rare-shingle signal (thinner than the exploratory
+   * fixtures' longer, multi-shingle phrase), and the candidate parent carries no fabricated
+   * citations at all, so the resulting edge lands below EXPLORATORY_THRESHOLD but above
+   * RELATED_THRESHOLD: real, non-similarity evidence, just thin.
+   */
+  const relatedPhrase = (tag: string) => `an unusual quiet archive review noted-${tag}`;
+
+  function relatedChild(url: string, date: string, tag = "shared"): Page {
+    return { url, date, marker: "Child", body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${relatedPhrase(tag)}.` };
+  }
+  function relatedParent(url: string, date: string, tag = "shared"): Page {
+    return { url, date, marker: "Parent", body: `${relatedPhrase(tag)}.` };
+  }
+
+  it("classifies a thinner-than-probable edge as related and recurses into it only in deep mode", async () => {
+    const child = relatedChild("https://sources.test/related-child", "2023-01-05");
+    const parent = relatedParent("https://sources.test/related-parent", "2023-01-01");
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      { fetcher: fetcher([parent], []), proposer: proposer(new Map([[child.url, [proposed(parent.url)]], [parent.url, []]]), providerCalls) },
+    );
+
+    expect(result.rejected_edges).toEqual([]);
+    expect(result.accepted_edges).toHaveLength(1);
+    const edge = result.accepted_edges[0]!;
+    expect(edge.provenance_status).toBe("related");
+    expect(edge.recursed).toBe(true);
+    expect(edge.directionality).toBe("unknown");
+    expect(edge.claim_mutations).toEqual([]); // related edges are never subject to mutation analysis
+    // Only deep mode recurses into a related parent.
+    expect(providerCalls).toEqual([child.url, parent.url]);
+  });
+
+  it("leaves the same edge rejected in strict mode", async () => {
+    const child = relatedChild("https://sources.test/related-child-strict", "2023-01-05");
+    const parent = relatedParent("https://sources.test/related-parent-strict", "2023-01-01");
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "strict" },
+      { fetcher: fetcher([parent], []), proposer: proposer(new Map([[child.url, [proposed(parent.url)]]]), providerCalls) },
+    );
+
+    expect(result.accepted_edges).toEqual([]);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: parent.url, termination: "validation-rejected" }));
+    expect(providerCalls).toEqual([child.url]);
+  });
+
+  it("leaves the same edge rejected (not recursed) in exploratory mode", async () => {
+    const child = relatedChild("https://sources.test/related-child-exploratory", "2023-01-05");
+    const parent = relatedParent("https://sources.test/related-parent-exploratory", "2023-01-01");
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "exploratory" },
+      { fetcher: fetcher([parent], []), proposer: proposer(new Map([[child.url, [proposed(parent.url)]]]), providerCalls) },
+    );
+
+    expect(result.accepted_edges).toEqual([]);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: parent.url, termination: "validation-rejected" }));
+    // Exploratory mode never recurses into a merely-related candidate.
+    expect(providerCalls).toEqual([child.url]);
+  });
+
+  it("preserves both crosslinks to a shared document discovered from two branches, fetching/expanding it once", async () => {
+    const phraseA = "an unusual quiet archive review noted-a";
+    const phraseB = "an unusual quiet archive review noted-b";
+    const d: Page = { url: "https://sources.test/related-d", date: "2023-01-01", marker: "D", body: `${phraseA}. ${phraseB}.` };
+    const a: Page = { url: "https://sources.test/related-a", date: "2023-01-05", marker: "A", body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${phraseA}.` };
+    const b: Page = { url: "https://sources.test/related-b", date: "2023-01-05", marker: "B", body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${phraseB}.` };
+    const root = { url: "https://sources.test/related-root", date: "2023-01-06", marker: "Root", links: [a.url, b.url] };
+    const fetchCalls: string[] = [];
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(root), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      {
+        fetcher: fetcher([a, b, d], fetchCalls),
+        proposer: proposer(
+          new Map([[root.url, [proposed(a.url), proposed(b.url)]], [a.url, [proposed(d.url)]], [b.url, [proposed(d.url)]], [d.url, []]]),
+          providerCalls,
+        ),
+      },
+    );
+
+    expect(fetchCalls.filter((url) => url === d.url)).toHaveLength(1);
+    expect(providerCalls.filter((url) => url === d.url)).toHaveLength(1);
+    const byUrl = new Map(result.documents.map((document) => [document.url, document.id]));
+    const dId = byUrl.get(d.url);
+    const incomingFromD = result.accepted_edges.filter((edge) => edge.parent_id === dId);
+    expect(incomingFromD).toHaveLength(2);
+    expect(incomingFromD.map((edge) => edge.child_id).sort()).toEqual([byUrl.get(a.url), byUrl.get(b.url)].sort());
+    expect(incomingFromD.every((edge) => edge.provenance_status === "related")).toBe(true);
+  });
+
+  it("rejects a reverse-provenance cycle when chronology makes it impossible", async () => {
+    const a = { url: "https://sources.test/deep-cycle-a", date: "2023-01-03", marker: "A", links: ["https://sources.test/deep-cycle-b"] };
+    const b = { url: "https://sources.test/deep-cycle-b", date: "2023-01-02", marker: "B" };
+
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      {
+        fetcher: fetcher([a, b], []),
+        proposer: proposer(new Map([[a.url, [proposed(b.url)]], [b.url, [proposed(a.url)]]]), []),
+      },
+    );
+
+    expect(acceptedUrls(result)).toEqual([`${b.url}>${a.url}`]);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: a.url, termination: "cycle" }));
+  });
+
+  it("preserves a meaningful unknown-direction related back-link without expanding a cycle", async () => {
+    const phrase = "an unusual quiet archive review noted-cycle";
+    const a: Page = { url: "https://sources.test/related-cycle-a", date: "2023-01-03", marker: "A", body: `${phrase}. First contextual detail.` };
+    const b: Page = { url: "https://sources.test/related-cycle-b", date: "2023-01-03", marker: "B", body: `${phrase}. Second contextual detail.` };
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      {
+        fetcher: fetcher([a, b], []),
+        proposer: proposer(new Map([[a.url, [proposed(b.url)]], [b.url, [proposed(a.url)]]]), providerCalls),
+      },
+    );
+
+    expect(acceptedUrls(result)).toEqual([`${a.url}>${b.url}`, `${b.url}>${a.url}`]);
+    expect(result.accepted_edges.every((edge) => edge.provenance_status === "related" && edge.directionality === "unknown")).toBe(true);
+    // The back-link is retained for investigation, while each canonical document is analyzed once.
+    expect(providerCalls).toEqual([a.url, b.url]);
+  });
+
+  it("does not let discovered_by or other provider metadata change acceptance in deep mode", async () => {
+    const child = relatedChild("https://sources.test/related-meta-child", "2023-01-05");
+    const parent = relatedParent("https://sources.test/related-meta-parent", "2023-01-01");
+
+    const run = async (discovered_by: readonly string[]) =>
+      traverseProvenance(
+        { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+        {
+          fetcher: fetcher([parent], []),
+          proposer: proposer(new Map([[child.url, [{ url: parent.url, discovered_by }]], [parent.url, []]]), []),
+        },
+      );
+
+    const low = await run(["web-search"]);
+    const high = await run(["gptzero", "web-search"]);
+
+    expect(low.accepted_edges).toEqual(high.accepted_edges);
+    expect(low.rejected_edges).toEqual(high.rejected_edges);
+    expect(low.accepted_edges[0]?.provenance_status).toBe("related");
+  });
+
+  it("caps how many related parents a single node accepts (related branch cap)", async () => {
+    const tags = ["one", "two", "three", "four", "five"];
+    const child: Page = {
+      url: "https://sources.test/related-cap-child",
+      date: "2023-01-09",
+      marker: "Child",
+      body: `${FABRICATED[0]}. ${FABRICATED[1]}. ${tags.map((tag) => relatedPhrase(tag)).join(". ")}.`,
+    };
+    const parents = tags.map((tag, index) => relatedParent(`https://sources.test/related-cap-parent-${index}`, "2023-01-01", tag));
+    const routes = new Map<string, ProposedUpstreamSource[]>([[child.url, parents.map((page) => proposed(page.url))]]);
+    for (const page of parents) routes.set(page.url, []);
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      { fetcher: fetcher(parents, []), proposer: proposer(routes, []) },
+    );
+
+    const related = result.accepted_edges.filter((edge) => edge.provenance_status === "related");
+    expect(related).toHaveLength(4);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "related-branch-cap" }));
+  });
+
+  it("caps combined probable+related parents per node (MAX_CHILDREN_PER_NODE)", async () => {
+    const probableTag = (n: number) => `probable-${n}`;
+    const distinctivePhrase = (tag: string) =>
+      `extended analysis follows the committee reviewed several confidential internal memoranda ${tag} before reaching a quiet determination`;
+    const probableTags = [0, 1, 2].map(probableTag);
+    const relatedTags = ["r0", "r1", "r2", "r3"];
+    const child: Page = {
+      url: "https://sources.test/aaa-combined-cap-child",
+      date: "2023-01-09",
+      marker: "Child",
+      body:
+        `${FABRICATED[0]}. ${FABRICATED[1]}. ${probableTags.map((tag) => distinctivePhrase(tag)).join(". ")}. ` +
+        `${relatedTags.map((tag) => relatedPhrase(tag)).join(". ")}.`,
+    };
+    // "aaa-" prefixed URLs sort before "bbb-" ones, so probable candidates are processed first.
+    const probableParents = probableTags.map((tag, index) => ({
+      url: `https://sources.test/aaa-combined-cap-probable-${index}`,
+      date: "2023-01-01",
+      marker: "Parent",
+      body: `${FABRICATED[0]}. ${distinctivePhrase(tag)}.`,
+    }));
+    const relatedParents = relatedTags.map((tag, index) => relatedParent(`https://sources.test/bbb-combined-cap-related-${index}`, "2023-01-01", tag));
+    const allParents = [...probableParents, ...relatedParents];
+    const routes = new Map<string, ProposedUpstreamSource[]>([[child.url, allParents.map((page) => proposed(page.url))]]);
+    for (const page of allParents) routes.set(page.url, []);
+
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep" },
+      { fetcher: fetcher(allParents, []), proposer: proposer(routes, []) },
+    );
+
+    const probable = result.accepted_edges.filter((edge) => edge.provenance_status === "probable");
+    const related = result.accepted_edges.filter((edge) => edge.provenance_status === "related");
+    expect(probable).toHaveLength(3);
+    expect(related.length).toBeLessThanOrEqual(3);
+    expect(probable.length + related.length).toBeLessThanOrEqual(6);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "children-per-node-cap" }));
+  });
+
+  it("stops expanding new sources once MAX_EXPANDED_NODES is reached", async () => {
+    const a = { url: "https://sources.test/budget-a", date: "2023-01-03", marker: "A", links: ["https://sources.test/budget-b"] };
+    const b = { url: "https://sources.test/budget-b", date: "2023-01-02", marker: "B" };
+    const providerCalls: string[] = [];
+
+    const result = await traverseProvenance(
+      { seed: seed(a), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep", maxExpandedNodes: 1 },
+      { fetcher: fetcher([a, b], []), proposer: proposer(new Map([[a.url, [proposed(b.url)]], [b.url, []]]), providerCalls) },
+    );
+
+    expect(providerCalls).toEqual([a.url]);
+    expect(result.terminations).toContainEqual(expect.objectContaining({ url: b.url, reason: "node-budget-exhausted" }));
+    expect(result.stats.sources_expanded).toBe(1);
+    expect(result.status).not.toBe("failed");
+  });
+
+  it("caps validated investigation links per source as well as related/probable links", async () => {
+    const parents = [0, 1, 2].map((index) => ({
+      url: `https://sources.test/validated-child-cap-${index}`,
+      date: "2023-01-01",
+      marker: `Parent-${index}`,
+    }));
+    const child = {
+      url: "https://sources.test/validated-child-cap-root",
+      date: "2023-01-03",
+      marker: "Child",
+      links: parents.map((parent) => parent.url),
+    };
+    const routes = new Map<string, readonly ProposedUpstreamSource[]>([[child.url, parents.map((parent) => proposed(parent.url))]]);
+    for (const parent of parents) routes.set(parent.url, []);
+    const result = await traverseProvenance(
+      { seed: seed(child), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep", maxChildrenPerNode: 1 },
+      {
+        fetcher: fetcher(parents, []),
+        proposer: proposer(routes, []),
+      },
+    );
+
+    expect(result.accepted_edges).toHaveLength(1);
+    expect(result.accepted_edges[0]?.provenance_status).toBe("validated");
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "children-per-node-cap" }));
+  });
+
+  it("stops accepting new edges once MAX_EDGES is reached", async () => {
+    const child = seed({ url: "https://sources.test/edge-budget-child", date: "2023-01-03", marker: "Child" });
+    const p1 = { url: "https://sources.test/edge-budget-p1", date: "2023-01-01", marker: "P1" };
+    const p2 = { url: "https://sources.test/edge-budget-p2", date: "2023-01-01", marker: "P2" };
+
+    const result = await traverseProvenance(
+      { seed: child, claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep", maxEdges: 1 },
+      {
+        fetcher: fetcher([p1, p2], []),
+        proposer: proposer(new Map([[child.url, [proposed(p1.url), proposed(p2.url)]], [p1.url, []], [p2.url, []]]), []),
+      },
+    );
+
+    expect(result.accepted_edges).toHaveLength(1);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ termination: "edge-budget-exhausted" }));
+  });
+
+  it("counts candidate bootstrap links toward MAX_EDGES", async () => {
+    const submittedUrl = "https://submitted.ariadne.invalid/candidate-edge-budget";
+    const first = { url: "https://sources.test/candidate-edge-budget-first", date: "2023-01-02", marker: "First" };
+    const second = { url: "https://sources.test/candidate-edge-budget-second", date: "2023-01-02", marker: "Second" };
+    const result = await traverseProvenance(
+      { seed: submittedSeed(submittedUrl), claim: CLAIM, fabricated: FABRICATED, provenanceMode: "deep", maxEdges: 1 },
+      {
+        fetcher: fetcher([first, second], []),
+        proposer: proposer(new Map([[submittedUrl, [proposed(first.url), proposed(second.url)]], [first.url, []]]), []),
+      },
+    );
+
+    expect(result.candidate_matches).toHaveLength(1);
+    expect(result.rejected_edges).toContainEqual(expect.objectContaining({ parent_url: second.url, termination: "edge-budget-exhausted" }));
+  });
+});

@@ -47,6 +47,11 @@ function normalize(value: string | null | undefined): string {
  * acquisition, where canonicalization by content fingerprint settles real duplicates.
  */
 export function proposalIdentity(proposal: UpstreamProposal): string | null {
+  if (proposal.relationship_kind === "citation" && proposal.citation_direction && proposal.citation_metadata?.paper.semantic_scholar_paper_id) {
+    // A citation relationship is distinct from a normal discovery proposal for the same URL and
+    // from the opposite citation direction. Keep that structural edge intact through merging.
+    return `citation:${proposal.citation_direction}:${proposal.citation_metadata.paper.semantic_scholar_paper_id}`;
+  }
   if (proposal.url?.trim()) {
     try {
       const url = new URL(proposal.url);

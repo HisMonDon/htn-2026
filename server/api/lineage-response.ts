@@ -114,37 +114,61 @@ export function serializeTraversal(result: RecursiveProvenanceTraversal, context
       timestamp_conflict: x.timestamp_conflict ?? timing.conflict, passage: x.passage,
       outbound_links: x.outbound_links, fabricated_citations: x.fabricated_citations, mutations: x.citation_variants,
       ai_evidence: null, discovered_via: x.discovered_via, is_seed: x.content_fingerprint === seed?.content_fingerprint,
-      source_kind: x.discovered_via.includes("submitted-text") ? "submitted" : "fetched",
+      source_kind: x.discovered_via.includes("submitted-text") ? "submitted" : x.academic_metadata?.metadata_only ? "citation-metadata" : "fetched",
+      academic_metadata: x.academic_metadata ?? null,
     };
   });
   const byId = new Map(result.documents.map((x) => [x.id, x]));
   const edges: AriadneEdge[] = result.accepted_edges.map((x) => {
+    // Provenance states keep upstream -> downstream endpoints. A related edge uses discovery
+    // order (current document -> fetched document) and is explicitly direction-unknown.
+    const sourceId = x.provenance_status === "related" ? x.child_id : x.parent_id;
+    const targetId = x.provenance_status === "related" ? x.parent_id : x.child_id;
     let inspection: Extract<AriadneEdge, { status: "validated" }>["inspection"] = null;
-    try {
-      const inspected = validateProvenanceEdge({
-        parent: byId.get(x.parent_id)!, child: byId.get(x.child_id)!, corpus: result.documents,
-        now: () => new Date(generatedAt),
-      });
-      inspection = { validator: inspected.validator, role: "supplementary-inspection", signals: inspected.signals, evidence: inspected.evidence };
-    } catch {
-      warnings.push({ stage: "validation", source: null, category: "inspection-unavailable", message: "Supplementary edge inspection is unavailable; traversal evidence is retained.", recoverable: false });
+    if (x.provenance_status !== "related") {
+      try {
+        const inspected = validateProvenanceEdge({
+          parent: byId.get(x.parent_id)!, child: byId.get(x.child_id)!, corpus: result.documents,
+          now: () => new Date(generatedAt),
+        });
+        inspection = { validator: inspected.validator, role: "supplementary-inspection", signals: inspected.signals, evidence: inspected.evidence };
+      } catch {
+        warnings.push({ stage: "validation", source: null, category: "inspection-unavailable", message: "Supplementary edge inspection is unavailable; traversal evidence is retained.", recoverable: false });
+      }
     }
     // provenance_status distinguishes strict-validated edges from exploratory-only "probable"
     // edges; never collapse the two into a single "validated" status on the wire.
     return {
-      id: edgeId(x.parent_id, x.child_id, x.provenance_status), source: x.parent_id, target: x.child_id,
+      id: edgeId(sourceId, targetId, x.provenance_status), source: sourceId, target: targetId,
       reference_url: byId.get(x.parent_id)?.url ?? null, status: x.provenance_status, ariadne_score: x.confidence,
       score_method: "traversal-scoreEdge", type: x.type,
       evidence: { basis: x.basis, explicit_link: x.explicit_link, shared_mutations: x.shared_mutations, rare_shared_phrases: x.rare_shared_phrases, similarity: x.similarity, temporal: x.temporal },
       inspection, claim_mutations: x.claim_mutations, recursed: x.recursed,
+      directionality: x.directionality, evidence_tags: x.evidence_tags,
     };
   });
+  for (const [index, x] of result.citation_edges.entries()) {
+    const source = byId.get(x.source_id);
+    const target = byId.get(x.target_id);
+    edges.push({
+      id: edgeId(x.source_id, x.target_id, `citation-${x.direction}`, index),
+      source: x.source_id,
+      target: x.target_id,
+      reference_url: x.provider_metadata.paper.canonical_url ?? target?.url ?? source?.url ?? null,
+      status: "citation",
+      relationship_kind: "citation",
+      direction: x.direction,
+      recursed: x.recursed,
+      provider_metadata: x.provider_metadata,
+    });
+  }
   for (const [index, x] of result.candidate_matches.entries()) {
     const source = byId.get(x.source_id);
     edges.push({
-      id: edgeId(x.source_id, x.target_id, "candidate-match", index), source: x.source_id, target: x.target_id,
+      id: edgeId(x.target_id, x.source_id, "candidate-match", index), source: x.target_id, target: x.source_id,
       reference_url: source?.url ?? null, status: "candidate",
       reason: "Candidate source match discovered from submitted text; it is an investigation root, not validated provenance.",
+      directionality: "unknown", evidence_tags: [],
     });
   }
   for (const [index, x] of result.rejected_edges.entries()) {
@@ -154,6 +178,7 @@ export function serializeTraversal(result: RecursiveProvenanceTraversal, context
       reference_url: diagnosticUrl(x.parent_url), status: "rejected", ariadne_score: x.confidence,
       score_method: "traversal-scoreEdge", termination: x.termination,
       reason: x.termination === "fetch-failure" ? publicDiagnostic({ stage: x.stage ?? "fetch", source: null, category: x.category ?? "network-error", message: "", recoverable: x.recoverable ?? false }).message : x.reason,
+      directionality: "unknown", evidence_tags: [],
     });
   }
   if (result.status === "paused") warnings.push({ stage: "traversal", source: null, category: "traversal-paused", message: "Traversal is waiting for provider work or its request budget; resume this result after the indicated delay.", recoverable: true });

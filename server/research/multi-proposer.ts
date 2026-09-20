@@ -12,10 +12,11 @@ import type { CompletedUpstreamAnalysis, UpstreamAnalysis, UpstreamProposal, Ups
 
 export const GPTZERO_CHANNEL = "gptzero";
 export const WEB_CHANNEL = "web-search";
+export const SEMANTIC_SCHOLAR_CHANNEL = "semantic-scholar";
 
 export interface ChannelFailureEvent {
   document_id: string;
-  channel: typeof GPTZERO_CHANNEL | typeof WEB_CHANNEL;
+  channel: typeof GPTZERO_CHANNEL | typeof WEB_CHANNEL | typeof SEMANTIC_SCHOLAR_CHANNEL;
   message: string;
 }
 
@@ -81,16 +82,33 @@ function messageOf(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-export class MultiSourceProposer implements UpstreamSourceProposer {
-  readonly kind = "gptzero+web-search" as const;
+function isProposer(value: UpstreamSourceProposer | MultiSourceProposerOptions | null): value is UpstreamSourceProposer {
+  return value !== null && typeof (value as Partial<UpstreamSourceProposer>).analyze === "function";
+}
 
-  private readonly webCache = new Map<string, readonly UpstreamProposal[]>();
+export class MultiSourceProposer implements UpstreamSourceProposer {
+  readonly kind = "gptzero+web-search+semantic-scholar" as const;
+
+  private readonly supplementalCache = new Map<string, readonly UpstreamProposal[]>();
+  private readonly semanticScholar: UpstreamSourceProposer | null;
+  private readonly options: MultiSourceProposerOptions;
 
   constructor(
     private readonly gptzero: UpstreamSourceProposer,
-    private readonly web: UpstreamSourceProposer,
-    private readonly options: MultiSourceProposerOptions = {},
-  ) {}
+    private readonly web: UpstreamSourceProposer | null,
+    semanticScholarOrOptions: UpstreamSourceProposer | MultiSourceProposerOptions | null = null,
+    options: MultiSourceProposerOptions = {},
+  ) {
+    // Keep the original `(gptzero, web, options)` call shape while allowing the newer optional
+    // citation channel as `(gptzero, web, semanticScholar, options)`.
+    if (isProposer(semanticScholarOrOptions)) {
+      this.semanticScholar = semanticScholarOrOptions;
+      this.options = options;
+    } else {
+      this.semanticScholar = null;
+      this.options = (semanticScholarOrOptions as MultiSourceProposerOptions | null) ?? options;
+    }
+  }
 
   /** Forwarded so GPTZero's per-invocation provider request ledger keeps working. */
   startRun(limit: number): void {
@@ -98,45 +116,60 @@ export class MultiSourceProposer implements UpstreamSourceProposer {
   }
 
   async analyze(document: CandidateDocument, continuation?: { job_id: string }): Promise<UpstreamAnalysis> {
-    const cached = continuation ? this.webCache.get(document.id) : undefined;
-    const [primary, secondary] = await Promise.allSettled([
+    // Citation metadata nodes deliberately have no full text. Their recursive work is a citation
+    // graph lookup only; sending their empty body to GPTZero/web would neither help nor be a real
+    // document analysis.
+    if (document.academic_metadata?.metadata_only) {
+      if (!this.semanticScholar) return [];
+      return this.semanticScholar.analyze(document, continuation);
+    }
+    const cached = continuation ? this.supplementalCache.get(document.id) : undefined;
+    const [primary, webResult, semanticResult] = await Promise.allSettled([
       this.gptzero.analyze(document, continuation),
-      cached ? Promise.resolve(cached) : this.web.analyze(document).then(proposalsOf),
+      cached ? Promise.resolve([] as readonly UpstreamProposal[]) : this.web ? this.web.analyze(document).then(proposalsOf) : Promise.resolve([] as readonly UpstreamProposal[]),
+      cached ? Promise.resolve(cached) : this.semanticScholar ? this.semanticScholar.analyze(document).then(proposalsOf) : Promise.resolve([] as readonly UpstreamProposal[]),
     ]);
 
-    const webProposals = secondary.status === "fulfilled" ? tag(secondary.value, WEB_CHANNEL) : [];
-    if (secondary.status === "rejected") this.report(document.id, WEB_CHANNEL, secondary.reason);
+    const webProposals = webResult.status === "fulfilled" ? tag(webResult.value, WEB_CHANNEL) : [];
+    const semanticProposals = semanticResult.status === "fulfilled" ? tag(semanticResult.value, SEMANTIC_SCHOLAR_CHANNEL) : [];
+    const supplemental = cached ?? mergeProposals(webProposals, semanticProposals);
+    if (webResult.status === "rejected") this.report(document.id, WEB_CHANNEL, webResult.reason);
+    if (semanticResult.status === "rejected") this.report(document.id, SEMANTIC_SCHOLAR_CHANNEL, semanticResult.reason);
 
     if (primary.status === "rejected") {
       this.report(document.id, GPTZERO_CHANNEL, primary.reason);
-      // GPTZero erroring is not "GPTZero found nothing": with nothing from the web either, surface
+      // GPTZero erroring is not "GPTZero found nothing": with no supplemental candidates either, surface
       // the failure so traversal records a provider failure exactly as it did before.
-      if (webProposals.length === 0) {
-        if (secondary.status === "rejected") {
-          throw new Error(`${messageOf(primary.reason)}; web search also failed: ${messageOf(secondary.reason)}`);
+      if (supplemental.length === 0) {
+        if (webResult.status === "rejected" || semanticResult.status === "rejected") {
+          const failures = [
+            webResult.status === "rejected" ? `web search also failed: ${messageOf(webResult.reason)}` : null,
+            semanticResult.status === "rejected" ? `Semantic Scholar also failed: ${messageOf(semanticResult.reason)}` : null,
+          ].filter(Boolean).join("; ");
+          throw new Error(`${messageOf(primary.reason)}; ${failures}`);
         }
         throw primary.reason;
       }
-      this.webCache.delete(document.id);
-      return { status: "completed", proposals: webProposals };
+      this.supplementalCache.delete(document.id);
+      return { status: "completed", proposals: supplemental };
     }
 
     if (isPending(primary.value)) {
-      // Paused work resumes later; keep this run's web results (even an empty answer) so the resume
-      // doesn't repeat identical searches. A failed search is not kept: the resume may retry it.
-      if (secondary.status === "fulfilled") this.remember(document.id, webProposals);
+      // Paused work resumes later; keep successful supplemental results (even an empty answer) so
+      // the resume doesn't repeat identical searches/graph calls. Failed channels may retry.
+      if (webResult.status === "fulfilled" && semanticResult.status === "fulfilled") this.remember(document.id, supplemental);
       return primary.value;
     }
 
-    this.webCache.delete(document.id);
-    const proposals = mergeProposals(tag(proposalsOf(primary.value), GPTZERO_CHANNEL), webProposals);
+    this.supplementalCache.delete(document.id);
+    const proposals = mergeProposals(tag(proposalsOf(primary.value), GPTZERO_CHANNEL), supplemental);
     return { status: "completed", proposals, fallback: fallbackOf(primary.value) };
   }
 
   private remember(id: string, proposals: readonly UpstreamProposal[]): void {
-    this.webCache.set(id, proposals);
+    this.supplementalCache.set(id, proposals);
     const limit = this.options.cacheLimit ?? 200;
-    while (this.webCache.size > limit) this.webCache.delete(this.webCache.keys().next().value!);
+    while (this.supplementalCache.size > limit) this.supplementalCache.delete(this.supplementalCache.keys().next().value!);
   }
 
   private report(documentId: string, channel: ChannelFailureEvent["channel"], reason: unknown): void {

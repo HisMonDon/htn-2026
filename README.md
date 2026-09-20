@@ -20,6 +20,8 @@ Fill in `.env` locally. It is git-ignored. Only `.env.example` is committed.
 | `GPTZERO_API_KEY` | GPTZero `POST /v2/predict/text` |
 | `BRAVE_SEARCH_API_KEY` | Optional. Enables the web-retrieval proposer that runs alongside GPTZero (Brave Search API). Unset: GPTZero-only discovery. Search hits are only candidates; they are fetched and validated like any GPTZero proposal |
 | `WEB_SEARCH_MAX_QUERIES`, `WEB_SEARCH_RESULTS_PER_QUERY`, `WEB_SEARCH_MAX_CANDIDATES`, `WEB_SEARCH_TIMEOUT_MS` | Per-source search bounds (defaults 5 queries, 4 results/query, 10 candidates; `WEB_SEARCH_TIMEOUT_MS` is the total search time budget per analyzed source, default 10000) |
+| `TRAVERSAL_MODE` | `strict` (validated recursion), `exploratory` (validated + probable), or `deep` (validated + probable + related). `PROVENANCE_MODE` remains a compatible alias. |
+| `MAX_GRAPH_DEPTH`, `MAX_EXPANDED_NODES`, `MAX_EDGES`, `MAX_CHILDREN_PER_NODE`, `MAX_RELATED_CHILDREN_PER_NODE` | Investigation-graph safety limits. Defaults are 5 hops, 25 expanded documents, 60 links, 6 links/document, and 4 related links/document. |
 | `USE_MOCKS` | `true`: offline test operator and mock GPTZero. Anything else: real Browserbase and GPTZero, no silent fallback |
 | `CONTROLLED_TARGET_URL` | Browser-facing URL of the controlled target. Must be a public tunnel for Browserbase |
 | `STAGEHAND_MODEL` | Optional model, e.g. `anthropic/claude-sonnet-4-6`; omitted lets Model Gateway choose |

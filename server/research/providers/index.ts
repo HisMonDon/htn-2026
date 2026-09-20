@@ -24,6 +24,16 @@ export { CorpusSearch, CorpusFetcher } from "./corpus";
 export { BraveSearchProvider, type BraveSearchOptions } from "./brave";
 export { DirectHttpFetcher, type DirectHttpFetcherOptions } from "./http";
 export {
+  createSemanticScholarProposer,
+  SemanticScholarHttpError,
+  SemanticScholarProposer,
+  SemanticScholarProvider,
+  SemanticScholarTimeoutError,
+  type SemanticScholarDebugEvent,
+  type SemanticScholarProposerOptions,
+  type SemanticScholarProviderOptions,
+} from "./semantic-scholar";
+export {
   fetchSource,
   fetchSourceDetailed,
   SearchSourceResolver,

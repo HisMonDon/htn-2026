@@ -8,7 +8,7 @@ import { MultiSourceProposer } from "../research/multi-proposer";
 import { createWebSearchProposer } from "../research/web-proposer";
 import { assembleDocument, type CandidateDocument } from "../research/extract";
 import { ingestSourceReference } from "../research/ingestion";
-import { CorpusFetcher, CorpusSearch, DirectHttpFetcher, SearchSourceResolver } from "../research/providers";
+import { createSemanticScholarProposer, CorpusFetcher, CorpusSearch, DirectHttpFetcher, SearchSourceResolver } from "../research/providers";
 import { traverseProvenance, type RecursiveProvenanceTraversal, type TraverseProvenanceDeps, type TraversalDiagnostic } from "../research/traversal";
 import { HttpError } from "../service";
 import { serializeTraversal } from "./lineage-response";
@@ -24,22 +24,31 @@ interface StoredRun {
 
 function failedTraversal(diagnostic: TraversalDiagnostic, maxDepth: number): RecursiveProvenanceTraversal {
   return {
-    documents: [], accepted_edges: [], candidate_matches: [], rejected_edges: [], terminations: [], pending_jobs: [],
+    documents: [], accepted_edges: [], citation_edges: [], candidate_matches: [], rejected_edges: [], terminations: [], pending_jobs: [],
     diagnostics: [diagnostic], status: "failed", checkpoint: null,
-    stats: { max_depth: maxDepth, sources_expanded: 0, proposals_received: 0, fetched: 0, fetch_failures: 0, analysis_requests: 0 },
+    stats: { max_depth: maxDepth, sources_expanded: 0, proposals_received: 0, fetched: 0, fetch_failures: 0, analysis_requests: 0, citation_edges: 0 },
   };
 }
 
-export function createLineageDeps(config: { useMocks: boolean; gptzeroApiKey: string | null; webSearch?: Config["webSearch"] }): TraverseProvenanceDeps {
+export function createLineageDeps(
+  config: { useMocks: boolean; gptzeroApiKey: string | null; webSearch?: Config["webSearch"]; semanticScholar?: Config["semanticScholar"] },
+  provenanceMode: "strict" | "exploratory" | "deep" = "strict",
+): TraverseProvenanceDeps {
   if (config.useMocks) return {
     proposer: { analyze: async (document) => document.outbound_links.map((x) => ({ url: x })) },
     fetcher: new CorpusFetcher(CORPUS), resolver: new SearchSourceResolver(new CorpusSearch(CORPUS)),
   };
   const gptzero = createUpstreamSourceProposer(config);
-  // Without a search key this is exactly the GPTZero-only proposer it was before.
-  const web = config.webSearch ? createWebSearchProposer(config.webSearch) : null;
-  const proposer = web
-    ? new MultiSourceProposer(gptzero, web, {
+  // Without a search key this is exactly the GPTZero-only proposer it was before. Deep mode widens
+  // candidate/query breadth to help build a deeper investigation graph; validation still decides
+  // what, if anything, each candidate becomes.
+  const webSearchConfig = config.webSearch && provenanceMode === "deep"
+    ? { ...config.webSearch, maxQueries: config.webSearch.maxQueriesDeep, maxCandidates: config.webSearch.maxCandidatesDeep }
+    : config.webSearch;
+  const web = webSearchConfig ? createWebSearchProposer(webSearchConfig) : null;
+  const semanticScholar = config.semanticScholar ? createSemanticScholarProposer(config.semanticScholar) : null;
+  const proposer = web || semanticScholar
+    ? new MultiSourceProposer(gptzero, web, semanticScholar, {
         onChannelFailure: (event) => console.warn(`[proposer] ${event.channel} failed for ${event.document_id}: ${event.message}`),
       })
     : gptzero;
@@ -50,8 +59,16 @@ export function createLineageController(
   deps: TraverseProvenanceDeps,
   mode: "live" | "mock",
   now = () => new Date(),
-  /** Defaults to "strict". Only the demo entrypoint should ever pass "exploratory". */
-  provenanceMode: "strict" | "exploratory" = "strict",
+  /** Defaults to "strict". Only the demo entrypoint should ever pass "exploratory"/"deep". */
+  provenanceMode: "strict" | "exploratory" | "deep" = "strict",
+  graphLimits?: {
+    maxDepth: number;
+    maxExpandedNodes: number;
+    maxEdges: number;
+    maxChildrenPerNode: number;
+    maxRelatedChildrenPerNode: number;
+    maxProbableChildrenPerNode: number;
+  },
 ) {
   const runs = new Map<string, StoredRun>();
 
@@ -61,7 +78,7 @@ export function createLineageController(
       ? structuredClone(previous.response.execution)
       : { proposer: mode, fallbacks: [], provenance_mode: provenanceMode };
     const fabricated = input.fabricated_citations ?? [];
-    const maxDepth = input.max_depth ?? 5;
+    const maxDepth = input.max_depth ?? graphLimits?.maxDepth ?? 5;
     let traversal: RecursiveProvenanceTraversal | null = null;
     try {
       if (!seed) {
@@ -86,6 +103,11 @@ export function createLineageController(
       if (seed) traversal = await traverseProvenance({
         seed, claim: input.claim, fabricated, maxDepth, maxProviderRequests: input.max_provider_requests,
         checkpoint: previous?.traversal.checkpoint, provenanceMode,
+        maxExpandedNodes: graphLimits?.maxExpandedNodes,
+        maxEdges: graphLimits?.maxEdges,
+        maxChildrenPerNode: graphLimits?.maxChildrenPerNode,
+        maxRelatedChildrenPerNode: graphLimits?.maxRelatedChildrenPerNode,
+        maxProbableChildrenPerNode: graphLimits?.maxProbableChildrenPerNode,
       }, {
         ...deps,
         proposer: {
@@ -104,7 +126,7 @@ export function createLineageController(
       });
     } catch {
       const diagnostic: TraversalDiagnostic = { stage: "traversal", source: null, category: "stage-failed", message: "", recoverable: false };
-      traversal = previous ? { ...previous.traversal, status: previous.traversal.accepted_edges.length || previous.traversal.candidate_matches.length ? "partial" : "failed", checkpoint: null, pending_jobs: [], diagnostics: [...previous.traversal.diagnostics, diagnostic] } : failedTraversal(diagnostic, maxDepth);
+      traversal = previous ? { ...previous.traversal, status: previous.traversal.accepted_edges.length || previous.traversal.citation_edges.length || previous.traversal.candidate_matches.length ? "partial" : "failed", checkpoint: null, pending_jobs: [], diagnostics: [...previous.traversal.diagnostics, diagnostic] } : failedTraversal(diagnostic, maxDepth);
       if (!previous && seed) traversal.documents = [seed];
     }
     const response = serializeTraversal(traversal!, { id, input, seed, execution, generatedAt: now().toISOString() });
