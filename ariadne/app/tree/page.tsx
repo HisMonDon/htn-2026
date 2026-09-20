@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, Suspense, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertTriangle, Route } from "lucide-react";
 import { createResearch, type LineageTree } from "@/lib/api";
 import { graphLegendItems, toGraphData, type GraphData, type GraphLegendItem } from "@/lib/graph";
+import LiquidChrome from "@/components/LiquidChrome";
 import AeroShards from "@/components/AeroShards";
 import styles from "./tree.module.css";
 
@@ -46,6 +47,7 @@ const MOCK_TREE_INPUT: MockTree = {
   generated_at: new Date().toISOString(),
   root_ids: ["n1"],
   nodes: [
+    // --- LEVEL 0 (Root) ---
     {
       id: "n1", canonical_id: "n1", content_fingerprint: "hash1",
       url: "https://nature-journal.example.com/enzymes/2023/11",
@@ -57,6 +59,7 @@ const MOCK_TREE_INPUT: MockTree = {
       outbound_links: [], fabricated_citations: [], mutations: [], ai_evidence: null,
       discovered_via: ["browserbase"], is_seed: true,
     },
+    // --- LEVEL 1 ---
     {
       id: "n2", canonical_id: "n2", content_fingerprint: "hash2",
       url: "https://techcrunch.example.com/2023/11/02/microplastic-enzyme",
@@ -105,6 +108,7 @@ const MOCK_TREE_INPUT: MockTree = {
       outbound_links: ["https://nature-journal.example.com/enzymes/2023/11"],
       fabricated_citations: [], mutations: [], ai_evidence: null, discovered_via: ["browserbase"], is_seed: false,
     },
+    // --- LEVEL 2 ---
     {
       id: "n5", canonical_id: "n5", content_fingerprint: "hash5",
       url: "https://eco-warriors.example.org/blog/enzyme",
@@ -161,6 +165,7 @@ const MOCK_TREE_INPUT: MockTree = {
       outbound_links: ["https://hackernews.example.com/item?id=8888", "https://nature-journal.example.com/enzymes/2023/11"],
       fabricated_citations: [], mutations: ["Original analysis added"], ai_evidence: null, discovered_via: ["elastic-hybrid"], is_seed: false,
     },
+    // --- LEVEL 3 ---
     {
       id: "n7", canonical_id: "n7", content_fingerprint: "hash7",
       url: "https://facebook.example.com/groups/savetheocean/post",
@@ -192,6 +197,7 @@ const MOCK_TREE_INPUT: MockTree = {
       passage: "Number 4: Plastic is OVER. TikTok users are going crazy over a new enzyme that dissolves microplastics.",
       outbound_links: ["https://tiktok.example.com/video/555"], fabricated_citations: [], mutations: ["Aggregated into listicle"], ai_evidence: null, discovered_via: ["elastic-lexical"], is_seed: false,
     },
+    // --- LEVEL 4 ---
     {
       id: "n10", canonical_id: "n10", content_fingerprint: "hash10",
       url: "https://spam.example.net/chudo-ferment",
@@ -214,19 +220,29 @@ const MOCK_TREE_INPUT: MockTree = {
     }
   ],
   edges: [
+    // n1 children
     { parent_id: "n1", child_id: "n2", type: "propagation", confidence: 0.98, basis: "Direct explicit link and high text similarity.", shared_mutations: [], explicit_link: true, rare_shared_phrases: 4, similarity: 0.82, temporal: { parent_time: "2023-11-01T10:00:00Z", child_time: "2023-11-02T14:30:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
     { parent_id: "n1", child_id: "n3", type: "similarity", confidence: 0.72, basis: "High semantic similarity to core claim despite lack of explicit citation.", shared_mutations: [], explicit_link: false, rare_shared_phrases: 0, similarity: 0.65, temporal: { parent_time: "2023-11-01T10:00:00Z", child_time: "2023-11-03T08:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
     { parent_id: "n1", child_id: "n4", type: "propagation", confidence: 0.99, basis: "Direct external link to exact source.", shared_mutations: [], explicit_link: true, rare_shared_phrases: 1, similarity: 0.45, temporal: { parent_time: "2023-11-01T10:00:00Z", child_time: "2023-11-02T18:15:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
     { parent_id: "n1", child_id: "n13", type: "propagation", confidence: 0.99, basis: "Direct domain link to exact article.", shared_mutations: [], explicit_link: true, rare_shared_phrases: 3, similarity: 0.95, temporal: { parent_time: "2023-11-01T10:00:00Z", child_time: "2023-11-01T11:45:00Z", gap_days: 0, ordering: "strict" }, alternatives: [] },
+    // n2 children
     { parent_id: "n2", child_id: "n5", type: "propagation", confidence: 0.95, basis: "Direct link to TechNews article.", shared_mutations: ["Sensational headline phrasing"], explicit_link: true, rare_shared_phrases: 2, similarity: 0.78, temporal: { parent_time: "2023-11-02T14:30:00Z", child_time: "2023-11-04T12:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
     { parent_id: "n2", child_id: "n6", type: "propagation", confidence: 0.96, basis: "Exact URL match in Reddit submission.", shared_mutations: ["Title matches parent verbatim"], explicit_link: true, rare_shared_phrases: 5, similarity: 0.99, temporal: { parent_time: "2023-11-02T14:30:00Z", child_time: "2023-11-02T15:00:00Z", gap_days: 0, ordering: "strict" }, alternatives: [] },
+    // n3 children
     { parent_id: "n3", child_id: "n8", type: "similarity", confidence: 0.88, basis: "Automated scraping detected based on verbatim text copy.", shared_mutations: ["Rewritten by AI", "Exaggerated claims"], explicit_link: false, rare_shared_phrases: 6, similarity: 0.98, temporal: { parent_time: "2023-11-03T08:00:00Z", child_time: "2023-11-03T08:05:00Z", gap_days: 0, ordering: "strict" }, alternatives: [] },
+    // n4 children
     { parent_id: "n4", child_id: "n11", type: "similarity", confidence: 0.85, basis: "Verbatim phrasing 'enzyme that completely dissolves microplastics in 24 hours'.", shared_mutations: ["Converted to social media thread format"], explicit_link: false, rare_shared_phrases: 4, similarity: 0.88, temporal: { parent_time: "2023-11-02T18:15:00Z", child_time: "2023-11-04T19:00:00Z", gap_days: 2, ordering: "strict" }, alternatives: [{ candidate_id: "n1", confidence: 0.3, reason: "Lacks the specific viral social phrasing present in n4." }] },
+    // n5 children
     { parent_id: "n5", child_id: "n7", type: "propagation", confidence: 0.94, basis: "Direct explicit share link.", shared_mutations: ["Conspiracy angle", "Sensational headline phrasing"], explicit_link: true, rare_shared_phrases: 3, similarity: 0.85, temporal: { parent_time: "2023-11-04T12:00:00Z", child_time: "2023-11-05T07:30:00Z", gap_days: 0, ordering: "strict" }, alternatives: [] },
+    // n6 children
     { parent_id: "n6", child_id: "n15", type: "propagation", confidence: 0.89, basis: "Explicit textual reference to specific Reddit thread.", shared_mutations: [], explicit_link: true, rare_shared_phrases: 1, similarity: 0.45, temporal: { parent_time: "2023-11-02T15:00:00Z", child_time: "2023-11-05T09:00:00Z", gap_days: 2, ordering: "strict" }, alternatives: [] },
+    // n8 children
     { parent_id: "n8", child_id: "n9", type: "similarity", confidence: 0.76, basis: "Cross-lingual semantic match of specific scraped phrasing.", shared_mutations: ["Exaggerated claims"], explicit_link: false, rare_shared_phrases: 0, similarity: 0.70, temporal: { parent_time: "2023-11-03T08:05:00Z", child_time: "2023-11-04T10:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
+    // n9 children
     { parent_id: "n9", child_id: "n10", type: "similarity", confidence: 0.92, basis: "Exact match of Russian translated text.", shared_mutations: ["Machine translated to Russian"], explicit_link: false, rare_shared_phrases: 5, similarity: 0.85, temporal: { parent_time: "2023-11-04T10:00:00Z", child_time: "2023-11-05T22:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
+    // n11 children
     { parent_id: "n11", child_id: "n12", type: "propagation", confidence: 0.95, basis: "Embedded TikTok video in listicle.", shared_mutations: ["Omitted temperature caveats"], explicit_link: true, rare_shared_phrases: 1, similarity: 0.40, temporal: { parent_time: "2023-11-04T19:00:00Z", child_time: "2023-11-06T14:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
+    // n13 children
     { parent_id: "n13", child_id: "n14", type: "propagation", confidence: 0.91, basis: "Explicit link back to HN discussion.", shared_mutations: [], explicit_link: true, rare_shared_phrases: 1, similarity: 0.35, temporal: { parent_time: "2023-11-01T11:45:00Z", child_time: "2023-11-03T09:00:00Z", gap_days: 1, ordering: "strict" }, alternatives: [] },
   ],
   rejected_edges: [
@@ -268,7 +284,6 @@ function TreeView() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Initializing Ariadne Protocol...");
   const [isMock, setIsMock] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!query) return; // stays "idle"; the render guards on `query` too
@@ -316,16 +331,23 @@ function TreeView() {
     };
   }, [query]);
 
-  // If we are fully done and no sidebars are open, flow gently (ribbon). Otherwise spin (vortex).
-  const activeFlow = phase === "done" && !isSidebarOpen ? "ribbon" : "vortex";
+  const liquidchromebg = useMemo(
+    () => (
+      <LiquidChrome
+          baseColor={[0.1, 0.1, 0.1]}
+          speed={0.2}
+          amplitude={0.3}
+          frequencyX={3}
+          frequencyY={3}
+          interactive={false}
+        />
+    ),
+    []
+  );
 
   return (
     <main className={styles.workspace}>
-      <AeroShards
-        shardColor="#e0a51b"
-        accentColor="#e0c21b"
-        flow={activeFlow}
-      />
+      {liquidchromebg}
       <div className="absolute inset-0 pointer-events-none bg-black/35" aria-hidden="true" />
 
       <header className={styles.header}>
@@ -396,10 +418,7 @@ function TreeView() {
       {/* Graph Render */}
       {query && phase === "done" && graphData && (
         <div className={styles.graphRegion}>
-          <GraphVisualizer 
-            data={graphData} 
-            onPanelChange={setIsSidebarOpen}
-          />
+          <GraphVisualizer data={graphData} />
         </div>
       )}
     </main>
@@ -411,10 +430,13 @@ export default function TreePage() {
     <Suspense
       fallback={
         <main className={styles.workspace}>
-          <AeroShards
-            shardColor="#e0a51b"
-            accentColor="#e0c21b"
-            flow="vortex"
+          <LiquidChrome
+            baseColor={[0.1, 0.1, 0.1]}
+            speed={0.2}
+            amplitude={0.3}
+            frequencyX={3}
+            frequencyY={3}
+            interactive={false}
           />
           <div className="absolute inset-0 pointer-events-none bg-black/35" aria-hidden="true" />
           <div className={styles.stateCard}>

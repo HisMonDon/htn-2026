@@ -181,7 +181,7 @@ function smoothStepCamera(t: number) {
   return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-export default function GraphVisualizer({ data, onPanelChange }: { data: GraphData, onPanelChange?: (isOpen: boolean) => void; }) {
+export default function GraphVisualizer({ data }: { data: GraphData }) {
   const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
   
@@ -382,10 +382,6 @@ export default function GraphVisualizer({ data, onPanelChange }: { data: GraphDa
   const selectedNodeSubmitted = selectedNode ? isSubmittedNode(selectedNode) : false;
   const selectedNodeHasTimestampConflict = selectedNode ? hasTimestampConflict(selectedNode) : false;
   const selectedLinkIsCandidate = selectedLink?.kind === "candidate_match";
-
-  useEffect(() => {
-    onPanelChange?.(panelOpen || evidencePanelOpen);
-  }, [panelOpen, evidencePanelOpen, onPanelChange]);
 
   const isFocusedLink = useCallback(
     (link: GraphLink) => {
