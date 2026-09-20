@@ -1,6 +1,6 @@
 # Ariadne
 
-Traces an AI hallucination back through the documents it spread across, builds an evidence packet, and drafts a correction that a human approves before anything is submitted.
+Ariadne takes a source such as a research paper and recursively investigates fake citations and false claims to track down AI hallucinations.
 
 ## Setup
 
