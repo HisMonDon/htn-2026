@@ -20,7 +20,7 @@ const neuton = Neuton({
 });
 
 export const metadata: Metadata = {
-  title: "ariadne.",
+  title: "Ariadne",
   description: "Trace every thread of research to its origin.",
 };
 

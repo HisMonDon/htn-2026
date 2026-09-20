@@ -78,11 +78,11 @@ export default function LandingPage() {
       <div className={styles.content}>
         <header className={styles.header}>
           <h1 className={styles.title}>
-            ariadne.
+            Ariadne
           </h1>
 
           <p className={styles.subhead}>
-            trace every thread of research to pinpoint AI hallucinations.
+            Trace every thread of research to pinpoint AI hallucinations.
           </p>
         </header>
 

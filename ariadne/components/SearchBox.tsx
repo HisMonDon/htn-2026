@@ -12,9 +12,9 @@ interface SearchBoxProps {
 }
 
 const suggestions = [
-  "large language models",
-  "graph algorithms",
-  "quantum computing",
+  "memory-augmented potential field theory",
+  "leveraging biometric leakage",
+  "efficient llm uncertainty quantification",
 ];
 
 export default function SearchBox({
@@ -76,7 +76,7 @@ export default function SearchBox({
                   setIsFocused(false);
                 }
               }}
-              placeholder="search..."
+              placeholder="Search..."
               autoComplete="off"
               spellCheck="false"
               disabled={disabled}
@@ -96,7 +96,7 @@ export default function SearchBox({
           </div>
 
           <div className={`${styles.suggestions} ${expanded ? styles.suggestionsActive : ""}`}>
-            <h2>suggestions</h2>
+            <h2>Suggestions</h2>
             <ul>
               {suggestions.map((suggestion) => (
                 <li key={suggestion}>

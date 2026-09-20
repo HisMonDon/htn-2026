@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, Suspense, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertTriangle, Route } from "lucide-react";
 import { createResearch, type LineageTree } from "@/lib/api";
 import { graphLegendItems, toGraphData, type GraphData, type GraphLegendItem } from "@/lib/graph";
 import LiquidChrome from "@/components/LiquidChrome";
+import AeroShards from "@/components/AeroShards";
 import styles from "./tree.module.css";
 
 const LEGEND_MARK_CLASS: Record<GraphLegendItem["mark"], string> = {
@@ -330,16 +331,23 @@ function TreeView() {
     };
   }, [query]);
 
+  const liquidchromebg = useMemo(
+    () => (
+      <LiquidChrome
+          baseColor={[0.1, 0.1, 0.1]}
+          speed={0.2}
+          amplitude={0.3}
+          frequencyX={3}
+          frequencyY={3}
+          interactive={false}
+        />
+    ),
+    []
+  );
+
   return (
     <main className={styles.workspace}>
-      <LiquidChrome
-        baseColor={[0.1, 0.1, 0.1]}
-        speed={0.2}
-        amplitude={0.3}
-        frequencyX={3}
-        frequencyY={3}
-        interactive={false}
-      />
+      {liquidchromebg}
       <div className="absolute inset-0 pointer-events-none bg-black/35" aria-hidden="true" />
 
       <header className={styles.header}>

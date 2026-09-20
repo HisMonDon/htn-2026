@@ -19,7 +19,7 @@ const track = [...items, ...items];
 export default function BuiltWith() {
   return (
     <div className={styles.root}>
-      <span className={styles.label}>built with:</span>
+      <span className={styles.label}>Built with:</span>
 
       <div className={styles.viewport}>
         <ul className={styles.track}>
