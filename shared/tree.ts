@@ -151,7 +151,7 @@ export const LineageTree = z
     }),
   })
   .superRefine((tree, ctx) => {
-    const ids = new Set(tree.nodes.map((node) => node.id));
+    const ids = new Set<string>(tree.nodes.map((node) => node.id));
     const incoming = new Map<string, Set<string>>(tree.nodes.map((node) => [node.id, new Set()]));
     const children = new Map<string, Set<string>>(tree.nodes.map((node) => [node.id, new Set()]));
     const edgeKeys = new Set<string>();
@@ -173,7 +173,9 @@ export const LineageTree = z
       incoming.get(edge.child_id)!.add(edge.parent_id);
       children.get(edge.parent_id)!.add(edge.child_id);
     });
-    const times = new Map(tree.nodes.map((node) => [node.id, node.earliest_possible]));
+    const times = new Map<string, string | null>(
+      tree.nodes.map((node) => [node.id, node.earliest_possible]),
+    );
     tree.edges.forEach((edge, index) => {
       const parent = times.get(edge.parent_id);
       const child = times.get(edge.child_id);
@@ -197,7 +199,7 @@ export const LineageTree = z
       ctx.addIssue({ code: "custom", path: ["edges"], message: "edges contain a cycle" });
     }
     const expectedRoots = [...incoming].filter(([, parents]) => parents.size === 0).map(([id]) => id).sort();
-    const suppliedRoots = [...new Set(tree.root_ids)].sort();
+    const suppliedRoots = [...new Set<string>(tree.root_ids)].sort();
     for (const root of suppliedRoots) {
       if (!ids.has(root) || (incoming.get(root)?.size ?? 0) > 0) {
         ctx.addIssue({ code: "custom", path: ["root_ids"], message: `root "${root}" is unknown or has a parent` });
