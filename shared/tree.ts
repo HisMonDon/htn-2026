@@ -9,6 +9,12 @@ import { AiEvidence } from "./schema";
 const timestamp = z.iso.datetime({ offset: true });
 const confidence = z.number().min(0).max(1);
 
+type TreeIntegrityInput = {
+  nodes: Array<{ id: string; earliest_possible: string | null }>;
+  edges: Array<{ parent_id: string; child_id: string }>;
+  root_ids: string[];
+};
+
 /** Where a normalized document's claimed timestamp came from. */
 export const TimestampSource = z.enum([
   "meta",
@@ -151,11 +157,14 @@ export const LineageTree = z
     }),
   })
   .superRefine((tree, ctx) => {
-    const ids = new Set<string>(tree.nodes.map((node) => node.id));
-    const incoming = new Map<string, Set<string>>(tree.nodes.map((node) => [node.id, new Set()]));
-    const children = new Map<string, Set<string>>(tree.nodes.map((node) => [node.id, new Set()]));
+    // Zod has fully parsed this value before superRefine. Keep the small shape this
+    // integrity check needs explicit so it type-checks consistently across compilers.
+    const validatedTree = tree as TreeIntegrityInput;
+    const ids = new Set<string>(validatedTree.nodes.map((node) => node.id));
+    const incoming = new Map<string, Set<string>>(validatedTree.nodes.map((node) => [node.id, new Set()]));
+    const children = new Map<string, Set<string>>(validatedTree.nodes.map((node) => [node.id, new Set()]));
     const edgeKeys = new Set<string>();
-    tree.edges.forEach((edge, index) => {
+    validatedTree.edges.forEach((edge, index) => {
       if (!ids.has(edge.parent_id) || !ids.has(edge.child_id)) {
         ctx.addIssue({ code: "custom", path: ["edges", index], message: "edge references an unknown node" });
         return;
@@ -174,9 +183,9 @@ export const LineageTree = z
       children.get(edge.parent_id)!.add(edge.child_id);
     });
     const times = new Map<string, string | null>(
-      tree.nodes.map((node) => [node.id, node.earliest_possible]),
+      validatedTree.nodes.map((node) => [node.id, node.earliest_possible]),
     );
-    tree.edges.forEach((edge, index) => {
+    validatedTree.edges.forEach((edge, index) => {
       const parent = times.get(edge.parent_id);
       const child = times.get(edge.child_id);
       if (parent && child && Date.parse(parent) > Date.parse(child)) {
@@ -199,13 +208,13 @@ export const LineageTree = z
       ctx.addIssue({ code: "custom", path: ["edges"], message: "edges contain a cycle" });
     }
     const expectedRoots = [...incoming].filter(([, parents]) => parents.size === 0).map(([id]) => id).sort();
-    const suppliedRoots = [...new Set<string>(tree.root_ids)].sort();
+    const suppliedRoots = [...new Set<string>(validatedTree.root_ids)].sort();
     for (const root of suppliedRoots) {
       if (!ids.has(root) || (incoming.get(root)?.size ?? 0) > 0) {
         ctx.addIssue({ code: "custom", path: ["root_ids"], message: `root "${root}" is unknown or has a parent` });
       }
     }
-    if (tree.root_ids.length !== suppliedRoots.length || expectedRoots.join("\u0000") !== suppliedRoots.join("\u0000")) {
+    if (validatedTree.root_ids.length !== suppliedRoots.length || expectedRoots.join("\u0000") !== suppliedRoots.join("\u0000")) {
       ctx.addIssue({ code: "custom", path: ["root_ids"], message: "root_ids must list every node without an accepted parent exactly once" });
     }
   });
