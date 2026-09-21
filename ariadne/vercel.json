@@ -1,0 +1,3 @@
+{
+  "installCommand": "cd .. && npm ci && cd ariadne && npm ci"
+}
